@@ -1,0 +1,37 @@
+{
+  "manager_name": "My FPL Squad",
+  "team_id": null,
+  "free_transfers": 0,
+  "bank_millions": 0.5,
+  "squad": [
+    {"name": "Verbruggen", "team": "BHA", "position": "GKP"},
+    {"name": "Virgil", "team": "LIV", "position": "DEF"},
+    {"name": "Dunk", "team": "BHA", "position": "DEF"},
+    {"name": "Gabriel", "team": "ARS", "position": "DEF"},
+    {"name": "Justin", "team": "LEE", "position": "DEF"},
+    {"name": "Rice", "team": "ARS", "position": "MID"},
+    {"name": "Ødegaard", "team": "ARS", "position": "MID"},
+    {"name": "Palmer", "team": "CHE", "position": "MID"},
+    {"name": "Groß", "team": "BHA", "position": "MID"},
+    {"name": "Thiago", "team": "BRE", "position": "FWD"},
+    {"name": "Isak", "team": "LIV", "position": "FWD"},
+    {"name": "Wilson", "team": "SUN", "position": "GKP"},
+    {"name": "M.Sangaré", "team": "BRE", "position": "MID"},
+    {"name": "O'Reilly", "team": "MCI", "position": "DEF"},
+    {"name": "João Pedro", "team": "CHE", "position": "FWD"}
+  ],
+  "custom_news": [
+    {
+      "player": "O'Reilly",
+      "source": "Manchester Evening News / Enzo Maresca Press Conference",
+      "headline": "Nico O'Reilly not 100 percent and needs rest over international break",
+      "text": "Enzo Maresca has stated that Nico O'Reilly must utilize the coming weeks to return to peak fitness. Having withdrawn from the Coventry City match with a back problem, the 21-year-old has failed to start consecutive matches since. 'He's not 100 percent. In the last game I really liked him... [A rest is] what he needs, also to use that break to do the right things in terms of therapy and be 100 percent after the international break.'"
+    },
+    {
+      "player": "João Pedro",
+      "source": "FPL Official Flag",
+      "headline": "João Pedro red-flagged and unavailable",
+      "text": "Unavailable for this Gameweek (red flag)."
+    }
+  ]
+}

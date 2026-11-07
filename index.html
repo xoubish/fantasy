@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FPL AI Squad Optimizer & Variation Explorer</title>
+  <style>
+    :root {
+      --fpl-purple: #37003c;
+      --fpl-dark: #1d0021;
+      --fpl-green: #00ff87;
+      --fpl-cyan: #04f5ff;
+      --turf-1: #1e7e48;
+      --turf-2: #248f52;
+      --card-bg: rgba(18, 55, 36, 0.92);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at top, #37003c 0%, #16001a 100%);
+      color: #ffffff;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      background: rgba(55, 0, 60, 0.85);
+      border: 1px solid rgba(0, 255, 135, 0.35);
+      border-bottom: 3px solid var(--fpl-green);
+      border-radius: 14px;
+      padding: 18px 24px;
+      margin-bottom: 18px;
+    }
+    .brand h1 {
+      font-size: 1.45rem;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+    .brand p {
+      color: var(--fpl-green);
+      font-size: 0.9rem;
+      margin-top: 4px;
+      font-weight: 600;
+    }
+    .score-pill {
+      background: var(--fpl-green);
+      color: #1d0021;
+      padding: 10px 20px;
+      border-radius: 12px;
+      text-align: center;
+      min-width: 180px;
+      box-shadow: 0 4px 15px rgba(0, 255, 135, 0.25);
+    }
+    .score-pill .lbl {
+      font-size: 0.7rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .score-pill .val {
+      font-size: 1.7rem;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+    .score-pill .range {
+      font-size: 0.74rem;
+      font-weight: 700;
+      opacity: 0.85;
+    }
+    .controls-bar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .mode-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      padding: 9px 15px;
+      border-radius: 9px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: rgba(255,255,255,0.16);
+      transform: translateY(-1px);
+    }
+    .btn.active {
+      background: var(--fpl-green);
+      color: #1d0021;
+      border-color: var(--fpl-green);
+    }
+    .btn-variation {
+      background: linear-gradient(135deg, #00ff87 0%, #04f5ff 100%);
+      color: #16001a;
+      border: none;
+      padding: 10px 18px;
+      font-size: 0.92rem;
+      font-weight: 800;
+      box-shadow: 0 4px 14px rgba(4, 245, 255, 0.28);
+    }
+    .btn-variation:hover {
+      filter: brightness(1.06);
+    }
+    .variation-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .var-pill {
+      font-size: 0.78rem;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.18);
+      color: #e5e0eb;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .var-pill.active {
+      background: rgba(0, 255, 135, 0.2);
+      border-color: var(--fpl-green);
+      color: var(--fpl-green);
+    }
+    .meta-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 10px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      font-size: 0.86rem;
+    }
+    .meta-strip span strong {
+      color: var(--fpl-green);
+    }
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 330px;
+      gap: 20px;
+      align-items: start;
+    }
+    @media (max-width: 920px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+    /* Football Pitch */
+    .pitch {
+      position: relative;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 3px solid rgba(255,255,255,0.85);
+      background: repeating-linear-gradient(
+        to bottom,
+        var(--turf-1) 0px,
+        var(--turf-1) 82px,
+        var(--turf-2) 82px,
+        var(--turf-2) 164px
+      );
+      padding: 20px 12px 24px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    }
+    .pitch-box-top {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 340px;
+      height: 95px;
+      border: 2px solid rgba(255,255,255,0.55);
+      border-top: none;
+      pointer-events: none;
+    }
+    .pitch-circle {
+      position: absolute;
+      bottom: 85px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 130px;
+      height: 130px;
+      border: 2px solid rgba(255,255,255,0.45);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .pitch-row {
+      display: flex;
+      justify-content: space-evenly;
+      align-items: center;
+      margin-bottom: 18px;
+      position: relative;
+      z-index: 2;
+    }
+    .pitch-row:last-child { margin-bottom: 0; }
+    .player-card {
+      width: 124px;
+      background: var(--card-bg);
+      border: 1.5px solid #52b788;
+      border-radius: 10px;
+      text-align: center;
+      position: relative;
+      padding-top: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+      transition: transform 0.15s ease;
+      cursor: pointer;
+    }
+    .player-card:hover {
+      transform: scale(1.05);
+      z-index: 5;
+      border-color: var(--fpl-green);
+    }
+    .price-tag {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      background: rgba(0,0,0,0.55);
+      color: #a3e4d7;
+      font-size: 0.66rem;
+      font-weight: 700;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    .xp-tag {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: #e9f5ec;
+      color: #111;
+      font-size: 0.7rem;
+      font-weight: 800;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    .xp-tag.high {
+      background: var(--fpl-green);
+    }
+    .cap-badge {
+      position: absolute;
+      top: 28px;
+      left: 6px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--fpl-purple);
+      color: var(--fpl-green);
+      border: 1.5px solid var(--fpl-green);
+      font-size: 0.68rem;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .star-badge {
+      position: absolute;
+      top: 51px;
+      left: 6px;
+      color: #ffd166;
+      font-size: 0.85rem;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    }
+    .jersey-svg {
+      width: 56px;
+      height: 50px;
+      margin: 12px auto 4px;
+      display: block;
+    }
+    .p-name {
+      background: #ffffff;
+      color: #240028;
+      font-weight: 800;
+      font-size: 0.78rem;
+      padding: 3px 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .p-fix {
+      background: #e8e4f0;
+      color: #37003c;
+      font-weight: 700;
+      font-size: 0.7rem;
+      padding: 3px 4px;
+      border-radius: 0 0 8px 8px;
+    }
+    /* Bench */
+    .bench-box {
+      margin-top: 14px;
+      background: rgba(31, 78, 56, 0.9);
+      border: 1.5px solid #52b788;
+      border-radius: 12px;
+      padding: 14px 10px 10px;
+    }
+    .bench-title {
+      text-align: center;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #b7e4c7;
+      margin-bottom: 10px;
+      font-weight: 800;
+    }
+    .sub-lbl {
+      font-size: 0.68rem;
+      font-weight: 800;
+      color: #d8f3dc;
+      margin-bottom: 4px;
+      text-align: center;
+    }
+    /* Sidebar */
+    .side-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .card-panel {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .card-panel h3 {
+      font-size: 0.95rem;
+      color: var(--fpl-green);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .info-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 0.83rem;
+      line-height: 1.4;
+      color: #e9e4ed;
+    }
+    .info-list li {
+      padding-left: 12px;
+      border-left: 2px solid var(--fpl-green);
+    }
+    .transfer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.09);
+      font-size: 0.82rem;
+    }
+    .transfer-row:last-child { border-bottom: none; }
+    .gain-badge {
+      background: rgba(0, 255, 135, 0.18);
+      color: var(--fpl-green);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-weight: 800;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1 id="squad-title">FPL AI Squad Optimizer</h1>
+        <p id="squad-subtitle">3-Year Historical PPG + Live xG/xA + Press Conference Risk Engine</p>
+      </div>
+      <div class="score-pill">
+        <div class="lbl">Projected Score</div>
+        <div class="val" id="proj-score">76.1 pts</div>
+        <div class="range" id="proj-range">Floor: 25 • Ceiling: 147</div>
+      </div>
+    </header>
+
+    <div class="controls-bar">
+      <div class="mode-tabs">
+        <button class="btn active" id="tab-best" onclick="switchMode('best')">🏆 Best £100m Squads (6 Variations)</button>
+        <button class="btn" id="tab-mine" onclick="switchMode('mine')">👤 My Current Squad (4-4-2)</button>
+        <button class="btn" id="tab-dream" onclick="switchMode('dream')">⚡ Unlimited Free Hit XI</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-variation" id="btn-next-var" onclick="nextVariation()">🔄 Next Tactical Variation</button>
+        <button class="btn" id="btn-random-var" onclick="generateRandomHighScoringSquad()">🎲 Shuffle New 70–80p Squad</button>
+      </div>
+    </div>
+
+    <div class="variation-pills" id="var-pills-bar"></div>
+
+    <div class="meta-strip">
+      <span>Formation: <strong id="meta-form">3-5-2</strong></span>
+      <span>Captain (2x): <strong id="meta-cap">Saka</strong></span>
+      <span>Vice-Captain: <strong id="meta-vice">Palmer</strong></span>
+      <span>15-Man Cost: <strong id="meta-cost">£99.4m / £100.0m</strong></span>
+    </div>
+
+    <div class="main-grid">
+      <div>
+        <div class="pitch">
+          <div class="pitch-box-top"></div>
+          <div class="pitch-circle"></div>
+          <div class="pitch-row" id="row-gkp"></div>
+          <div class="pitch-row" id="row-def"></div>
+          <div class="pitch-row" id="row-mid"></div>
+          <div class="pitch-row" id="row-fwd"></div>
+        </div>
+
+        <div class="bench-box">
+          <div class="bench-title">Substitutes (Auto-Sub Ordered)</div>
+          <div class="pitch-row" id="row-bench"></div>
+        </div>
+      </div>
+
+      <div class="side-panel">
+        <div class="card-panel">
+          <h3>Player Inspector (Click Any Card)</h3>
+          <div id="player-inspector" style="font-size:0.85rem; line-height:1.5; color:#ddd;">
+            Click any player on the pitch or bench to inspect their 3-year PPG, clean-sheet probability, 2+ goals conceded risk, and manager press conference news.
+          </div>
+        </div>
+
+        <div class="card-panel">
+          <h3>Tactical & News Insights</h3>
+          <ul class="info-list" id="notes-list"></ul>
+        </div>
+
+        <div class="card-panel">
+          <h3>Top 1-Transfer Upgrades (For Your Squad)</h3>
+          <div id="transfers-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DATA = {"variations": [{"title": "Variation 1: Balanced Optimal (3-5-2)", "subtitle": "Highest raw expected points across a 5-man midfield & 2 forwards", "formation": "3-5-2", "totalCost": 99.8, "budget": 100.0, "expectedPoints": 79.3, "floor": 26, "ceiling": 149, "captain": "Saka", "viceCaptain": "Palmer", "starters": [{"id": 218, "name": "Raya", "fullName": "David Raya", "team": "ARS", "teamName": "Arsenal", "pos": "GKP", "price": 5.6, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.31, "form": 6.0, "xp": 5.4, "displayXp": 5.4, "floor": 3, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 203, "name": "Gvardiol", "fullName": "Jo\u0161ko Gvardiol", "team": "MCI", "teamName": "Man City", "pos": "DEF", "price": 6.1, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 4.69, "form": 6.0, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 7.7, "floor": 2, "ceiling": 14, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 109, "name": "Gro\u00df", "fullName": "Pascal Gro\u00df", "team": "BHA", "teamName": "Brighton", "pos": "MID", "price": 6.8, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.66, "form": 7.0, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 235, "name": "Cunha", "fullName": "Matheus Cunha", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 7.1, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 5.13, "form": 6.4, "xp": 5.7, "displayXp": 5.7, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 216, "name": "Stewart", "fullName": "Ross Stewart", "team": "SUN", "teamName": "Sunderland", "pos": "FWD", "price": 4.5, "opponent": "EVE (A)", "csProb": 14, "gc2Prob": 58, "ppg3Yr": 3.27, "form": 2.8, "xp": 2.8, "displayXp": 2.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 226, "name": "Harwood-Bellis", "fullName": "Taylor Harwood-Bellis", "team": "SOU", "teamName": "Southampton", "pos": "DEF", "price": 4.1, "opponent": "FUL (A)", "csProb": 18, "gc2Prob": 52, "ppg3Yr": 2.67, "form": 3.3, "xp": 2.6, "displayXp": 2.6, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 217, "name": "Coyle", "fullName": "Lewie Coyle", "team": "HUL", "teamName": "Hull City", "pos": "DEF", "price": 4.0, "opponent": "ARS (A)", "csProb": 8, "gc2Prob": 71, "ppg3Yr": 2.56, "form": 2.0, "xp": 1.6, "displayXp": 1.6, "floor": 1, "ceiling": 6, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}, {"title": "Variation 2: Haaland + Saka + Palmer 'Threemium' (3-4-3)", "subtitle": "Fits Haaland (\u00a314.5m), Saka (\u00a310.5m) & Palmer (\u00a311.0m) in a 3-forward attack", "formation": "3-4-3", "totalCost": 99.9, "budget": 100.0, "expectedPoints": 76.9, "floor": 25, "ceiling": 147, "captain": "Saka", "viceCaptain": "Palmer", "starters": [{"id": 207, "name": "Pickford", "fullName": "Jordan Pickford", "team": "EVE", "teamName": "Everton", "pos": "GKP", "price": 5.0, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.0, "form": 5.2, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 223, "name": "Robinson", "fullName": "Antonee Robinson", "team": "FUL", "teamName": "Fulham", "pos": "DEF", "price": 5.0, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 3.66, "form": 5.5, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 7.7, "floor": 2, "ceiling": 14, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 109, "name": "Gro\u00df", "fullName": "Pascal Gro\u00df", "team": "BHA", "teamName": "Brighton", "pos": "MID", "price": 6.8, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.66, "form": 7.0, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 202, "name": "Haaland", "fullName": "Erling Haaland", "team": "MCI", "teamName": "Man City", "pos": "FWD", "price": 14.5, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 7.58, "form": 8.5, "xp": 7.3, "displayXp": 7.3, "floor": 2, "ceiling": 14, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 214, "name": "Ndiaye", "fullName": "Iliman Ndiaye", "team": "EVE", "teamName": "Everton", "pos": "FWD", "price": 5.6, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.33, "form": 5.5, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 215, "name": "Delap", "fullName": "Liam Delap", "team": "CHE", "teamName": "Chelsea", "pos": "FWD", "price": 6.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.55, "form": 5.8, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 225, "name": "Van den Berg", "fullName": "Sepp van den Berg", "team": "BRE", "teamName": "Brentford", "pos": "DEF", "price": 4.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.97, "form": 3.6, "xp": 2.7, "displayXp": 2.7, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 226, "name": "Harwood-Bellis", "fullName": "Taylor Harwood-Bellis", "team": "SOU", "teamName": "Southampton", "pos": "DEF", "price": 4.1, "opponent": "FUL (A)", "csProb": 18, "gc2Prob": 52, "ppg3Yr": 2.67, "form": 3.3, "xp": 2.6, "displayXp": 2.6, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 113, "name": "M.Sangar\u00e9", "fullName": "Massadio Sangar\u00e9", "team": "BRE", "teamName": "Brentford", "pos": "MID", "price": 4.5, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.69, "form": 2.4, "xp": 2.3, "displayXp": 2.3, "floor": 2, "ceiling": 8, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}, {"title": "Variation 3: Heavy Metal Front Three (3-4-3)", "subtitle": "Isak + Watkins + Cunha up front backed by Son, Saka, Palmer & Bruno", "formation": "3-4-3", "totalCost": 99.5, "budget": 100.0, "expectedPoints": 77.8, "floor": 26, "ceiling": 148, "captain": "Saka", "viceCaptain": "B.Fernandes", "starters": [{"id": 218, "name": "Raya", "fullName": "David Raya", "team": "ARS", "teamName": "Arsenal", "pos": "GKP", "price": 5.6, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.31, "form": 6.0, "xp": 5.4, "displayXp": 5.4, "floor": 3, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 223, "name": "Robinson", "fullName": "Antonee Robinson", "team": "FUL", "teamName": "Fulham", "pos": "DEF", "price": 5.0, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 3.66, "form": 5.5, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 230, "name": "Bowen", "fullName": "Jarrod Bowen", "team": "WHU", "teamName": "West Ham", "pos": "MID", "price": 7.5, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 5.13, "form": 6.3, "xp": 6.0, "displayXp": 6.0, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 111, "name": "Isak", "fullName": "Alexander Isak", "team": "LIV", "teamName": "Liverpool", "pos": "FWD", "price": 9.5, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 6.57, "form": 7.9, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 235, "name": "Cunha", "fullName": "Matheus Cunha", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 7.1, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 5.13, "form": 6.4, "xp": 5.7, "displayXp": 5.7, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 231, "name": "Smith Rowe", "fullName": "Emile Smith Rowe", "team": "FUL", "teamName": "Fulham", "pos": "MID", "price": 5.6, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 4.72, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 225, "name": "Van den Berg", "fullName": "Sepp van den Berg", "team": "BRE", "teamName": "Brentford", "pos": "DEF", "price": 4.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.97, "form": 3.6, "xp": 2.7, "displayXp": 2.7, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 105, "name": "Justin", "fullName": "James Justin", "team": "LEE", "teamName": "Leeds United", "pos": "DEF", "price": 4.4, "opponent": "TOT (H)", "csProb": 18, "gc2Prob": 51, "ppg3Yr": 2.67, "form": 2.8, "xp": 2.5, "displayXp": 2.5, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}, {"title": "Variation 4: Clean-Sheet Fortress (4-4-2)", "subtitle": "4 elite home/clean-sheet defenders (Gabriel, Saliba, Gvardiol, Robinson) + Raya", "formation": "4-4-2", "totalCost": 99.9, "budget": 100.0, "expectedPoints": 77.9, "floor": 26, "ceiling": 147, "captain": "Saka", "viceCaptain": "Palmer", "starters": [{"id": 207, "name": "Pickford", "fullName": "Jordan Pickford", "team": "EVE", "teamName": "Everton", "pos": "GKP", "price": 5.0, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.0, "form": 5.2, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 221, "name": "Saliba", "fullName": "William Saliba", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.2, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.34, "form": 6.6, "xp": 5.6, "displayXp": 5.6, "floor": 3, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 223, "name": "Robinson", "fullName": "Antonee Robinson", "team": "FUL", "teamName": "Fulham", "pos": "DEF", "price": 5.0, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 3.66, "form": 5.5, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 210, "name": "Mykolenko", "fullName": "Vitalii Mykolenko", "team": "EVE", "teamName": "Everton", "pos": "DEF", "price": 4.5, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 3.65, "form": 4.6, "xp": 4.4, "displayXp": 4.4, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 7.7, "floor": 2, "ceiling": 14, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 111, "name": "Isak", "fullName": "Alexander Isak", "team": "LIV", "teamName": "Liverpool", "pos": "FWD", "price": 9.5, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 6.57, "form": 7.9, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 216, "name": "Stewart", "fullName": "Ross Stewart", "team": "SUN", "teamName": "Sunderland", "pos": "FWD", "price": 4.5, "opponent": "EVE (A)", "csProb": 14, "gc2Prob": 58, "ppg3Yr": 3.27, "form": 2.8, "xp": 2.8, "displayXp": 2.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 232, "name": "Winks", "fullName": "Harry Winks", "team": "LEI", "teamName": "Leicester", "pos": "MID", "price": 4.5, "opponent": "MUN (A)", "csProb": 16, "gc2Prob": 54, "ppg3Yr": 2.72, "form": 2.9, "xp": 2.5, "displayXp": 2.5, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 217, "name": "Coyle", "fullName": "Lewie Coyle", "team": "HUL", "teamName": "Hull City", "pos": "DEF", "price": 4.0, "opponent": "ARS (A)", "csProb": 8, "gc2Prob": 71, "ppg3Yr": 2.56, "form": 2.0, "xp": 1.6, "displayXp": 1.6, "floor": 1, "ceiling": 6, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}, {"title": "Variation 5: Differential Upside & Wingers (3-5-2)", "subtitle": "Targets high-ceiling differentials: Son, Bowen, Gordon, Bruno & Watkins", "formation": "3-5-2", "totalCost": 99.8, "budget": 100.0, "expectedPoints": 78.3, "floor": 26, "ceiling": 149, "captain": "Saka", "viceCaptain": "B.Fernandes", "starters": [{"id": 207, "name": "Pickford", "fullName": "Jordan Pickford", "team": "EVE", "teamName": "Everton", "pos": "GKP", "price": 5.0, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.0, "form": 5.2, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 221, "name": "Saliba", "fullName": "William Saliba", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.2, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.34, "form": 6.6, "xp": 5.6, "displayXp": 5.6, "floor": 3, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 228, "name": "Son", "fullName": "Son Heung-min", "team": "TOT", "teamName": "Tottenham", "pos": "MID", "price": 9.6, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 6.26, "form": 6.9, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 230, "name": "Bowen", "fullName": "Jarrod Bowen", "team": "WHU", "teamName": "West Ham", "pos": "MID", "price": 7.5, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 5.13, "form": 6.3, "xp": 6.0, "displayXp": 6.0, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 235, "name": "Cunha", "fullName": "Matheus Cunha", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 7.1, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 5.13, "form": 6.4, "xp": 5.7, "displayXp": 5.7, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 236, "name": "Strand Larsen", "fullName": "J\u00f8rgen Strand Larsen", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 5.5, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 4.25, "form": 5.2, "xp": 4.3, "displayXp": 4.3, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 225, "name": "Van den Berg", "fullName": "Sepp van den Berg", "team": "BRE", "teamName": "Brentford", "pos": "DEF", "price": 4.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.97, "form": 3.6, "xp": 2.7, "displayXp": 2.7, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 226, "name": "Harwood-Bellis", "fullName": "Taylor Harwood-Bellis", "team": "SOU", "teamName": "Southampton", "pos": "DEF", "price": 4.1, "opponent": "FUL (A)", "csProb": 18, "gc2Prob": 52, "ppg3Yr": 2.67, "form": 3.3, "xp": 2.6, "displayXp": 2.6, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}, {"title": "Variation 6: All-Out Attacking Fullbacks + Haaland (4-3-3)", "subtitle": "Haaland + Solanke + Cunha up top with attacking fullbacks Hall & Porro", "formation": "3-4-3", "totalCost": 99.6, "budget": 100.0, "expectedPoints": 75.7, "floor": 26, "ceiling": 146, "captain": "Saka", "viceCaptain": "Haaland", "starters": [{"id": 218, "name": "Raya", "fullName": "David Raya", "team": "ARS", "teamName": "Arsenal", "pos": "GKP", "price": 5.6, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.31, "form": 6.0, "xp": 5.4, "displayXp": 5.4, "floor": 3, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 223, "name": "Robinson", "fullName": "Antonee Robinson", "team": "FUL", "teamName": "Fulham", "pos": "DEF", "price": 5.0, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 3.66, "form": 5.5, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 109, "name": "Gro\u00df", "fullName": "Pascal Gro\u00df", "team": "BHA", "teamName": "Brighton", "pos": "MID", "price": 6.8, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.66, "form": 7.0, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 231, "name": "Smith Rowe", "fullName": "Emile Smith Rowe", "team": "FUL", "teamName": "Fulham", "pos": "MID", "price": 5.6, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 4.72, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 202, "name": "Haaland", "fullName": "Erling Haaland", "team": "MCI", "teamName": "Man City", "pos": "FWD", "price": 14.5, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 7.58, "form": 8.5, "xp": 7.3, "displayXp": 7.3, "floor": 2, "ceiling": 14, "inDreamteam": true, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 205, "name": "Solanke", "fullName": "Dominic Solanke", "team": "TOT", "teamName": "Tottenham", "pos": "FWD", "price": 7.8, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 4.92, "form": 6.2, "xp": 5.5, "displayXp": 5.5, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 214, "name": "Ndiaye", "fullName": "Iliman Ndiaye", "team": "EVE", "teamName": "Everton", "pos": "FWD", "price": 5.6, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.33, "form": 5.5, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 209, "name": "Pedro Porro", "fullName": "Pedro Porro", "team": "TOT", "teamName": "Tottenham", "pos": "DEF", "price": 5.6, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 4.07, "form": 5.5, "xp": 4.8, "displayXp": 4.8, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 212, "name": "Semenyo", "fullName": "Antoine Semenyo", "team": "BOU", "teamName": "Bournemouth", "pos": "MID", "price": 5.7, "opponent": "AVL (A)", "csProb": 22, "gc2Prob": 45, "ppg3Yr": 4.45, "form": 5.4, "xp": 4.4, "displayXp": 4.4, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 225, "name": "Van den Berg", "fullName": "Sepp van den Berg", "team": "BRE", "teamName": "Brentford", "pos": "DEF", "price": 4.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.97, "form": 3.6, "xp": 2.7, "displayXp": 2.7, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": []}], "mySquad": {"title": "Your Current 15-Man Squad (Optimized)", "subtitle": "Includes Maresca press conference cameo-trap protection (O'Reilly benched to 2nd Sub)", "formation": "4-4-2", "totalCost": 93.8, "budget": 94.3, "expectedPoints": 64.8, "floor": 24, "ceiling": 133, "captain": "Palmer", "viceCaptain": "Gabriel", "starters": [{"id": 101, "name": "Verbruggen", "fullName": "Bart Verbruggen", "team": "BHA", "teamName": "Brighton", "pos": "GKP", "price": 4.5, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.36, "form": 4.5, "xp": 4.2, "displayXp": 4.2, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 102, "name": "Virgil", "fullName": "Virgil van Dijk", "team": "LIV", "teamName": "Liverpool", "pos": "DEF", "price": 6.2, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 4.04, "form": 5.8, "xp": 4.5, "displayXp": 4.5, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 103, "name": "Dunk", "fullName": "Lewis Dunk", "team": "BHA", "teamName": "Brighton", "pos": "DEF", "price": 4.6, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.18, "form": 4.2, "xp": 3.9, "displayXp": 3.9, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 105, "name": "Justin", "fullName": "James Justin", "team": "LEE", "teamName": "Leeds United", "pos": "DEF", "price": 4.4, "opponent": "TOT (H)", "csProb": 18, "gc2Prob": 51, "ppg3Yr": 2.67, "form": 2.8, "xp": 2.5, "displayXp": 2.5, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 106, "name": "Rice", "fullName": "Declan Rice", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 6.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.45, "form": 5.1, "xp": 4.8, "displayXp": 4.8, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 107, "name": "\u00d8degaard", "fullName": "Martin \u00d8degaard", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 8.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 5.47, "form": 6.4, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 15.4, "floor": 4, "ceiling": 28, "inDreamteam": false, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 109, "name": "Gro\u00df", "fullName": "Pascal Gro\u00df", "team": "BHA", "teamName": "Brighton", "pos": "MID", "price": 6.8, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.66, "form": 7.0, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 110, "name": "Thiago", "fullName": "Igor Thiago", "team": "BRE", "teamName": "Brentford", "pos": "FWD", "price": 6.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 4.21, "form": 4.8, "xp": 4.1, "displayXp": 4.1, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 111, "name": "Isak", "fullName": "Alexander Isak", "team": "LIV", "teamName": "Liverpool", "pos": "FWD", "price": 9.5, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 6.57, "form": 7.9, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 112, "name": "Wilson", "fullName": "Ben Wilson", "team": "SUN", "teamName": "Sunderland", "pos": "GKP", "price": 4.0, "opponent": "EVE (A)", "csProb": 14, "gc2Prob": 58, "ppg3Yr": 2.88, "form": 2.0, "xp": 2.4, "displayXp": 2.4, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 113, "name": "M.Sangar\u00e9", "fullName": "Massadio Sangar\u00e9", "team": "BRE", "teamName": "Brentford", "pos": "MID", "price": 4.5, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.69, "form": 2.4, "xp": 2.3, "displayXp": 2.3, "floor": 2, "ceiling": 8, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 114, "name": "O'Reilly", "fullName": "Nico O'Reilly", "team": "MCI", "teamName": "Man City", "pos": "DEF", "price": 4.8, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 4.54, "form": 3.5, "xp": 1.4, "displayXp": 1.4, "floor": 1, "ceiling": 6, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 20, "cameoProb": 55, "riskLevel": "CAMEO_ROTATION_RISK", "newsReasoning": "Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches \u2014 high risk of a 1-point bench cameo!"}, {"id": 115, "name": "Jo\u00e3o Pedro", "fullName": "Jo\u00e3o Pedro Junqueira", "team": "CHE", "teamName": "Chelsea", "pos": "FWD", "price": 6.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.94, "form": 0.0, "xp": 0.0, "displayXp": 0.0, "floor": 0, "ceiling": 0, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 0, "cameoProb": 0, "riskLevel": "INJURED_OR_OUT", "newsReasoning": "Ruled out (0% chance of playing) due to injury/suspension flag."}], "notes": ["Cameo Trap Alert (O'Reilly - BENCHED): Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches \u2014 high risk of a 1-point bench cameo!", "Unavailable (Jo\u00e3o Pedro): Buried in 3rd bench slot (0% start probability).", "Fixture Hedge (Thiago vs BHA defense): Starting Thiago alongside your BHA defensive assets hedges your floor so you still get points if BHA concede."]}, "dreamXi": {"title": "Unlimited Free Hit Dream XI", "subtitle": "No budget cap \u2014 pure maximum Expected Points across the Premier League", "formation": "3-5-2", "totalCost": 93.4, "budget": 999.0, "expectedPoints": 80.9, "floor": 26, "ceiling": 151, "captain": "Saka", "viceCaptain": "Palmer", "starters": [{"id": 218, "name": "Raya", "fullName": "David Raya", "team": "ARS", "teamName": "Arsenal", "pos": "GKP", "price": 5.6, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.31, "form": 6.0, "xp": 5.4, "displayXp": 5.4, "floor": 3, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 203, "name": "Gvardiol", "fullName": "Jo\u0161ko Gvardiol", "team": "MCI", "teamName": "Man City", "pos": "DEF", "price": 6.1, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 4.69, "form": 6.0, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 17.3, "floor": 4, "ceiling": 30, "inDreamteam": true, "isCaptain": true, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 7.7, "floor": 2, "ceiling": 14, "inDreamteam": false, "isCaptain": false, "isVice": true, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 228, "name": "Son", "fullName": "Son Heung-min", "team": "TOT", "teamName": "Tottenham", "pos": "MID", "price": 9.6, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 6.26, "form": 6.9, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 202, "name": "Haaland", "fullName": "Erling Haaland", "team": "MCI", "teamName": "Man City", "pos": "FWD", "price": 14.5, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 7.58, "form": 8.5, "xp": 7.3, "displayXp": 7.3, "floor": 2, "ceiling": 14, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "bench": [{"id": 101, "name": "Verbruggen", "fullName": "Bart Verbruggen", "team": "BHA", "teamName": "Brighton", "pos": "GKP", "price": 4.5, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.36, "form": 4.5, "xp": 4.2, "displayXp": 4.2, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}], "notes": ["Optimal Free Hit XI respecting max 3 players per Premier League club."]}, "transfers": [{"out": "Justin", "outPrice": 4.4, "in": "Hall", "inPrice": 4.9, "inTeam": "NEW", "inFix": "IPS (H)", "costDiff": 0.5, "xpGain": 2.7}, {"out": "O'Reilly", "outPrice": 4.8, "in": "Hall", "inPrice": 4.9, "inTeam": "NEW", "inFix": "IPS (H)", "costDiff": 0.1, "xpGain": 2.7}, {"out": "Jo\u00e3o Pedro", "outPrice": 6.0, "in": "Ndiaye", "inPrice": 5.6, "inTeam": "EVE", "inFix": "SUN (H)", "costDiff": -0.4, "xpGain": 2.6}, {"out": "Jo\u00e3o Pedro", "outPrice": 6.0, "in": "Wood", "inPrice": 6.5, "inTeam": "NFO", "inFix": "MCI (H)", "costDiff": 0.5, "xpGain": 2.6}, {"out": "O'Reilly", "outPrice": 4.8, "in": "Robinson", "inPrice": 5.0, "inTeam": "FUL", "inFix": "SOU (H)", "costDiff": 0.2, "xpGain": 2.5}], "playerPool": [{"id": 101, "name": "Verbruggen", "fullName": "Bart Verbruggen", "team": "BHA", "teamName": "Brighton", "pos": "GKP", "price": 4.5, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.36, "form": 4.5, "xp": 4.2, "displayXp": 4.2, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 102, "name": "Virgil", "fullName": "Virgil van Dijk", "team": "LIV", "teamName": "Liverpool", "pos": "DEF", "price": 6.2, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 4.04, "form": 5.8, "xp": 4.5, "displayXp": 4.5, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 103, "name": "Dunk", "fullName": "Lewis Dunk", "team": "BHA", "teamName": "Brighton", "pos": "DEF", "price": 4.6, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.18, "form": 4.2, "xp": 3.9, "displayXp": 3.9, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 104, "name": "Gabriel", "fullName": "Gabriel Magalh\u00e3es", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.6, "form": 7.4, "xp": 6.3, "displayXp": 6.3, "floor": 3, "ceiling": 11, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 105, "name": "Justin", "fullName": "James Justin", "team": "LEE", "teamName": "Leeds United", "pos": "DEF", "price": 4.4, "opponent": "TOT (H)", "csProb": 18, "gc2Prob": 51, "ppg3Yr": 2.67, "form": 2.8, "xp": 2.5, "displayXp": 2.5, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 106, "name": "Rice", "fullName": "Declan Rice", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 6.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.45, "form": 5.1, "xp": 4.8, "displayXp": 4.8, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 107, "name": "\u00d8degaard", "fullName": "Martin \u00d8degaard", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 8.4, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 5.47, "form": 6.4, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 108, "name": "Palmer", "fullName": "Cole Palmer", "team": "CHE", "teamName": "Chelsea", "pos": "MID", "price": 11.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 7.24, "form": 8.2, "xp": 7.7, "displayXp": 7.7, "floor": 2, "ceiling": 14, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 109, "name": "Gro\u00df", "fullName": "Pascal Gro\u00df", "team": "BHA", "teamName": "Brighton", "pos": "MID", "price": 6.8, "opponent": "BRE (H)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.66, "form": 7.0, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 110, "name": "Thiago", "fullName": "Igor Thiago", "team": "BRE", "teamName": "Brentford", "pos": "FWD", "price": 6.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 4.21, "form": 4.8, "xp": 4.1, "displayXp": 4.1, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 111, "name": "Isak", "fullName": "Alexander Isak", "team": "LIV", "teamName": "Liverpool", "pos": "FWD", "price": 9.5, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 6.57, "form": 7.9, "xp": 6.2, "displayXp": 6.2, "floor": 2, "ceiling": 13, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 112, "name": "Wilson", "fullName": "Ben Wilson", "team": "SUN", "teamName": "Sunderland", "pos": "GKP", "price": 4.0, "opponent": "EVE (A)", "csProb": 14, "gc2Prob": 58, "ppg3Yr": 2.88, "form": 2.0, "xp": 2.4, "displayXp": 2.4, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 113, "name": "M.Sangar\u00e9", "fullName": "Massadio Sangar\u00e9", "team": "BRE", "teamName": "Brentford", "pos": "MID", "price": 4.5, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.69, "form": 2.4, "xp": 2.3, "displayXp": 2.3, "floor": 2, "ceiling": 8, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 201, "name": "Saka", "fullName": "Bukayo Saka", "team": "ARS", "teamName": "Arsenal", "pos": "MID", "price": 10.5, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 6.99, "form": 8.6, "xp": 8.6, "displayXp": 8.6, "floor": 2, "ceiling": 15, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 202, "name": "Haaland", "fullName": "Erling Haaland", "team": "MCI", "teamName": "Man City", "pos": "FWD", "price": 14.5, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 7.58, "form": 8.5, "xp": 7.3, "displayXp": 7.3, "floor": 2, "ceiling": 14, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 203, "name": "Gvardiol", "fullName": "Jo\u0161ko Gvardiol", "team": "MCI", "teamName": "Man City", "pos": "DEF", "price": 6.1, "opponent": "NFO (A)", "csProb": 38, "gc2Prob": 25, "ppg3Yr": 4.69, "form": 6.0, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 204, "name": "Colwill", "fullName": "Levi Colwill", "team": "CHE", "teamName": "Chelsea", "pos": "DEF", "price": 4.9, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.68, "form": 5.0, "xp": 4.2, "displayXp": 4.2, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 205, "name": "Solanke", "fullName": "Dominic Solanke", "team": "TOT", "teamName": "Tottenham", "pos": "FWD", "price": 7.8, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 4.92, "form": 6.2, "xp": 5.5, "displayXp": 5.5, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 206, "name": "S\u00e1nchez", "fullName": "Robert S\u00e1nchez", "team": "CHE", "teamName": "Chelsea", "pos": "GKP", "price": 4.7, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 3.71, "form": 4.8, "xp": 4.3, "displayXp": 4.3, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 207, "name": "Pickford", "fullName": "Jordan Pickford", "team": "EVE", "teamName": "Everton", "pos": "GKP", "price": 5.0, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.0, "form": 5.2, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 208, "name": "Konat\u00e9", "fullName": "Ibrahima Konat\u00e9", "team": "LIV", "teamName": "Liverpool", "pos": "DEF", "price": 5.3, "opponent": "CRY (A)", "csProb": 39, "gc2Prob": 25, "ppg3Yr": 4.29, "form": 5.4, "xp": 4.2, "displayXp": 4.2, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 209, "name": "Pedro Porro", "fullName": "Pedro Porro", "team": "TOT", "teamName": "Tottenham", "pos": "DEF", "price": 5.6, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 4.07, "form": 5.5, "xp": 4.8, "displayXp": 4.8, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 210, "name": "Mykolenko", "fullName": "Vitalii Mykolenko", "team": "EVE", "teamName": "Everton", "pos": "DEF", "price": 4.5, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 3.65, "form": 4.6, "xp": 4.4, "displayXp": 4.4, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 211, "name": "Rogers", "fullName": "Morgan Rogers", "team": "AVL", "teamName": "Aston Villa", "pos": "MID", "price": 5.8, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 4.51, "form": 5.6, "xp": 5.0, "displayXp": 5.0, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 212, "name": "Semenyo", "fullName": "Antoine Semenyo", "team": "BOU", "teamName": "Bournemouth", "pos": "MID", "price": 5.7, "opponent": "AVL (A)", "csProb": 22, "gc2Prob": 45, "ppg3Yr": 4.45, "form": 5.4, "xp": 4.4, "displayXp": 4.4, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 213, "name": "Mbeumo", "fullName": "Bryan Mbeumo", "team": "BRE", "teamName": "Brentford", "pos": "MID", "price": 7.6, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 5.35, "form": 6.5, "xp": 5.6, "displayXp": 5.6, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 214, "name": "Ndiaye", "fullName": "Iliman Ndiaye", "team": "EVE", "teamName": "Everton", "pos": "FWD", "price": 5.6, "opponent": "SUN (H)", "csProb": 48, "gc2Prob": 16, "ppg3Yr": 4.33, "form": 5.5, "xp": 5.1, "displayXp": 5.1, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 215, "name": "Delap", "fullName": "Liam Delap", "team": "CHE", "teamName": "Chelsea", "pos": "FWD", "price": 6.0, "opponent": "SUN (A)", "csProb": 36, "gc2Prob": 27, "ppg3Yr": 4.55, "form": 5.8, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 216, "name": "Stewart", "fullName": "Ross Stewart", "team": "SUN", "teamName": "Sunderland", "pos": "FWD", "price": 4.5, "opponent": "EVE (A)", "csProb": 14, "gc2Prob": 58, "ppg3Yr": 3.27, "form": 2.8, "xp": 2.8, "displayXp": 2.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 217, "name": "Coyle", "fullName": "Lewie Coyle", "team": "HUL", "teamName": "Hull City", "pos": "DEF", "price": 4.0, "opponent": "ARS (A)", "csProb": 8, "gc2Prob": 71, "ppg3Yr": 2.56, "form": 2.0, "xp": 1.6, "displayXp": 1.6, "floor": 1, "ceiling": 6, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 218, "name": "Raya", "fullName": "David Raya", "team": "ARS", "teamName": "Arsenal", "pos": "GKP", "price": 5.6, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.31, "form": 6.0, "xp": 5.4, "displayXp": 5.4, "floor": 3, "ceiling": 10, "inDreamteam": true, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 219, "name": "Flekken", "fullName": "Mark Flekken", "team": "BRE", "teamName": "Brentford", "pos": "GKP", "price": 4.5, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 3.43, "form": 4.3, "xp": 3.5, "displayXp": 3.5, "floor": 1, "ceiling": 8, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 220, "name": "Fabianski", "fullName": "Lukasz Fabianski", "team": "WHU", "teamName": "West Ham", "pos": "GKP", "price": 4.0, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 3.61, "form": 3.6, "xp": 3.8, "displayXp": 3.8, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 221, "name": "Saliba", "fullName": "William Saliba", "team": "ARS", "teamName": "Arsenal", "pos": "DEF", "price": 6.2, "opponent": "HUL (H)", "csProb": 60, "gc2Prob": 9, "ppg3Yr": 4.34, "form": 6.6, "xp": 5.6, "displayXp": 5.6, "floor": 3, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 222, "name": "Aina", "fullName": "Ola Aina", "team": "NFO", "teamName": "Nott'm Forest", "pos": "DEF", "price": 5.1, "opponent": "MCI (H)", "csProb": 35, "gc2Prob": 29, "ppg3Yr": 4.12, "form": 5.2, "xp": 4.1, "displayXp": 4.1, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 223, "name": "Robinson", "fullName": "Antonee Robinson", "team": "FUL", "teamName": "Fulham", "pos": "DEF", "price": 5.0, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 3.66, "form": 5.5, "xp": 4.9, "displayXp": 4.9, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 224, "name": "Hall", "fullName": "Lewis Hall", "team": "NEW", "teamName": "Newcastle", "pos": "DEF", "price": 4.9, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 4.18, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 10, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 225, "name": "Van den Berg", "fullName": "Sepp van den Berg", "team": "BRE", "teamName": "Brentford", "pos": "DEF", "price": 4.2, "opponent": "BHA (A)", "csProb": 20, "gc2Prob": 48, "ppg3Yr": 2.97, "form": 3.6, "xp": 2.7, "displayXp": 2.7, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 226, "name": "Harwood-Bellis", "fullName": "Taylor Harwood-Bellis", "team": "SOU", "teamName": "Southampton", "pos": "DEF", "price": 4.1, "opponent": "FUL (A)", "csProb": 18, "gc2Prob": 52, "ppg3Yr": 2.67, "form": 3.3, "xp": 2.6, "displayXp": 2.6, "floor": 1, "ceiling": 7, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 227, "name": "B.Fernandes", "fullName": "Bruno Fernandes", "team": "MUN", "teamName": "Man Utd", "pos": "MID", "price": 8.5, "opponent": "LEI (H)", "csProb": 42, "gc2Prob": 22, "ppg3Yr": 4.97, "form": 6.8, "xp": 6.9, "displayXp": 6.9, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 228, "name": "Son", "fullName": "Son Heung-min", "team": "TOT", "teamName": "Tottenham", "pos": "MID", "price": 9.6, "opponent": "LEE (A)", "csProb": 29, "gc2Prob": 36, "ppg3Yr": 6.26, "form": 6.9, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 229, "name": "Gordon", "fullName": "Anthony Gordon", "team": "NEW", "teamName": "Newcastle", "pos": "MID", "price": 7.4, "opponent": "IPS (H)", "csProb": 45, "gc2Prob": 19, "ppg3Yr": 5.49, "form": 6.6, "xp": 6.7, "displayXp": 6.7, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 230, "name": "Bowen", "fullName": "Jarrod Bowen", "team": "WHU", "teamName": "West Ham", "pos": "MID", "price": 7.5, "opponent": "WOL (H)", "csProb": 33, "gc2Prob": 30, "ppg3Yr": 5.13, "form": 6.3, "xp": 6.0, "displayXp": 6.0, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 231, "name": "Smith Rowe", "fullName": "Emile Smith Rowe", "team": "FUL", "teamName": "Fulham", "pos": "MID", "price": 5.6, "opponent": "SOU (H)", "csProb": 44, "gc2Prob": 20, "ppg3Yr": 4.72, "form": 5.4, "xp": 5.2, "displayXp": 5.2, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 232, "name": "Winks", "fullName": "Harry Winks", "team": "LEI", "teamName": "Leicester", "pos": "MID", "price": 4.5, "opponent": "MUN (A)", "csProb": 16, "gc2Prob": 54, "ppg3Yr": 2.72, "form": 2.9, "xp": 2.5, "displayXp": 2.5, "floor": 2, "ceiling": 9, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 233, "name": "Watkins", "fullName": "Ollie Watkins", "team": "AVL", "teamName": "Aston Villa", "pos": "FWD", "price": 8.9, "opponent": "BOU (H)", "csProb": 37, "gc2Prob": 26, "ppg3Yr": 6.01, "form": 6.8, "xp": 6.3, "displayXp": 6.3, "floor": 2, "ceiling": 13, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 234, "name": "Wood", "fullName": "Chris Wood", "team": "NFO", "teamName": "Nott'm Forest", "pos": "FWD", "price": 6.5, "opponent": "MCI (H)", "csProb": 35, "gc2Prob": 29, "ppg3Yr": 5.66, "form": 5.8, "xp": 5.0, "displayXp": 5.0, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 235, "name": "Cunha", "fullName": "Matheus Cunha", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 7.1, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 5.13, "form": 6.4, "xp": 5.7, "displayXp": 5.7, "floor": 2, "ceiling": 12, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}, {"id": 236, "name": "Strand Larsen", "fullName": "J\u00f8rgen Strand Larsen", "team": "WOL", "teamName": "Wolves", "pos": "FWD", "price": 5.5, "opponent": "WHU (A)", "csProb": 21, "gc2Prob": 46, "ppg3Yr": 4.25, "form": 5.2, "xp": 4.3, "displayXp": 4.3, "floor": 2, "ceiling": 11, "inDreamteam": false, "isCaptain": false, "isVice": false, "startProb": 92, "cameoProb": 4, "riskLevel": "NONE", "newsReasoning": "Regular starter with no negative press conference or injury flags."}]};
+
+    const KIT_COLORS = {
+      ARS: { body: "#EF0107", sleeve: "#FFFFFF", stripe: null },
+      CHE: { body: "#034694", sleeve: "#034694", stripe: null },
+      MCI: { body: "#6CABDD", sleeve: "#FFFFFF", stripe: null },
+      LIV: { body: "#C8102E", sleeve: "#C8102E", stripe: null },
+      BHA: { body: "#0057B8", sleeve: "#0057B8", stripe: "#FFFFFF" },
+      BRE: { body: "#E30613", sleeve: "#FFFFFF", stripe: "#FFFFFF" },
+      TOT: { body: "#F5F7FA", sleeve: "#132257", stripe: null },
+      EVE: { body: "#003399", sleeve: "#FFFFFF", stripe: null },
+      LEE: { body: "#FFFFFF", sleeve: "#FFCD00", stripe: null },
+      SUN: { body: "#EB172B", sleeve: "#FFFFFF", stripe: "#FFFFFF" },
+      HUL: { body: "#F5A122", sleeve: "#111111", stripe: "#111111" },
+      AVL: { body: "#670E36", sleeve: "#95BFE5", stripe: null },
+      BOU: { body: "#DA291C", sleeve: "#111111", stripe: "#111111" },
+      NEW: { body: "#111111", sleeve: "#FFFFFF", stripe: "#FFFFFF" },
+      FUL: { body: "#FFFFFF", sleeve: "#111111", stripe: null },
+      MUN: { body: "#DA291C", sleeve: "#FFFFFF", stripe: null },
+      WHU: { body: "#7A263A", sleeve: "#1BB1E7", stripe: null },
+      NFO: { body: "#DD0000", sleeve: "#FFFFFF", stripe: null },
+      WOL: { body: "#FDB913", sleeve: "#231F20", stripe: null },
+      SOU: { body: "#D71920", sleeve: "#FFFFFF", stripe: "#FFFFFF" },
+      LEI: { body: "#003090", sleeve: "#FFFFFF", stripe: null }
+    };
+
+    let currentMode = "best";
+    let currentVarIdx = 0;
+
+    function jerseySvg(team, isGkp) {
+      let kit = KIT_COLORS[team] || { body: "#37003c", sleeve: "#ffffff", stripe: null };
+      let body = isGkp ? (team === "BHA" ? "#ff5992" : "#2ecc71") : kit.body;
+      let sleeve = isGkp ? body : kit.sleeve;
+      let stripes = (!isGkp && kit.stripe)
+        ? `<rect x="21" y="10" width="4" height="36" fill="${kit.stripe}"/>
+           <rect x="28" y="10" width="4" height="36" fill="${kit.stripe}"/>
+           <rect x="35" y="10" width="4" height="36" fill="${kit.stripe}"/>`
+        : "";
+      return `<svg class="jersey-svg" viewBox="0 0 60 52">
+        <polygon points="16,8 4,20 10,28 18,18" fill="${sleeve}" stroke="#111" stroke-width="1.5"/>
+        <polygon points="44,8 56,20 50,28 42,18" fill="${sleeve}" stroke="#111" stroke-width="1.5"/>
+        <rect x="16" y="8" width="28" height="38" rx="4" fill="${body}" stroke="#111" stroke-width="1.5"/>
+        ${stripes}
+        <path d="M24,8 Q30,15 36,8" fill="#1d0021" stroke="#111" stroke-width="1.2"/>
+      </svg>`;
+    }
+
+    function createCardHtml(p, subLabel = null) {
+      const capHtml = p.isCaptain
+        ? `<div class="cap-badge">C</div>`
+        : (p.isVice ? `<div class="cap-badge" style="color:#fff;border-color:#fff;">V</div>` : "");
+      const starHtml = p.inDreamteam ? `<div class="star-badge">★</div>` : "";
+      const xpClass = p.displayXp >= 6.0 ? "xp-tag high" : "xp-tag";
+      const wrapStart = subLabel ? `<div><div class="sub-lbl">${subLabel}</div>` : "";
+      const wrapEnd = subLabel ? `</div>` : "";
+      return `${wrapStart}
+        <div class="player-card" onclick='inspectPlayer(${JSON.stringify(p).replace(/'/g, "&#39;")})'>
+          <div class="price-tag">£${p.price.toFixed(1)}m</div>
+          <div class="${xpClass}">${p.displayXp.toFixed(1)}p</div>
+          ${capHtml}
+          ${starHtml}
+          ${jerseySvg(p.team, p.pos === "GKP")}
+          <div class="p-name">${p.name}</div>
+          <div class="p-fix">${p.team} • ${p.opponent}</div>
+        </div>
+      ${wrapEnd}`;
+    }
+
+    function inspectPlayer(p) {
+      const el = document.getElementById("player-inspector");
+      el.innerHTML = `
+        <div style="font-size:1.05rem;font-weight:800;color:#fff;margin-bottom:4px;">
+          ${p.fullName} (${p.teamName}) — £${p.price.toFixed(1)}m
+        </div>
+        <div style="color:var(--fpl-green);font-weight:700;margin-bottom:8px;">
+          Fixture: ${p.opponent} | Projected: ${p.displayXp.toFixed(1)} xP (Range: ${p.floor}–${p.ceiling} pts)
+        </div>
+        <div>• <strong>3-Year Historical PPG:</strong> ${p.ppg3Yr.toFixed(1)} pts/90 (Form: ${p.form})</div>
+        <div>• <strong>Clean Sheet Odds:</strong> ${p.csProb}% | <strong>Concede 2+ Goals Risk:</strong> ${p.gc2Prob}%</div>
+        <div>• <strong>Start Probability:</strong> ${p.startProb}% | <strong>1-Pt Cameo Risk:</strong> ${p.cameoProb}%</div>
+        <div style="margin-top:6px;padding:6px 8px;background:rgba(0,0,0,0.3);border-radius:6px;">
+          <strong>News Status (${p.riskLevel}):</strong> ${p.newsReasoning}
+        </div>
+      `;
+    }
+
+    function renderSquadView(squad) {
+      document.getElementById("squad-title").textContent = squad.title;
+      document.getElementById("squad-subtitle").textContent = squad.subtitle;
+      document.getElementById("proj-score").textContent = `${squad.expectedPoints.toFixed(1)} pts`;
+      document.getElementById("proj-range").textContent = `Floor: ${squad.floor} • Ceiling: ${squad.ceiling}`;
+      document.getElementById("meta-form").textContent = squad.formation;
+      document.getElementById("meta-cap").textContent = squad.captain;
+      document.getElementById("meta-vice").textContent = squad.viceCaptain;
+      document.getElementById("meta-cost").textContent =
+        squad.budget > 200 ? `£${squad.totalCost.toFixed(1)}m (Unlimited)` : `£${squad.totalCost.toFixed(1)}m / £${squad.budget.toFixed(1)}m`;
+
+      const gkps = squad.starters.filter(p => p.pos === "GKP");
+      const defs = squad.starters.filter(p => p.pos === "DEF");
+      const mids = squad.starters.filter(p => p.pos === "MID");
+      const fwds = squad.starters.filter(p => p.pos === "FWD");
+
+      document.getElementById("row-gkp").innerHTML = gkps.map(p => createCardHtml(p)).join("");
+      document.getElementById("row-def").innerHTML = defs.map(p => createCardHtml(p)).join("");
+      document.getElementById("row-mid").innerHTML = mids.map(p => createCardHtml(p)).join("");
+      document.getElementById("row-fwd").innerHTML = fwds.map(p => createCardHtml(p)).join("");
+
+      const benchHtml = squad.bench.map((bp, i) => {
+        const lbl = i === 0 ? "GKP" : `${i}. ${bp.pos}`;
+        return createCardHtml(bp, lbl);
+      }).join("");
+      document.getElementById("row-bench").innerHTML = benchHtml;
+
+      const notesHtml = (squad.notes || []).map(n => `<li>${n}</li>`).join("");
+      document.getElementById("notes-list").innerHTML = notesHtml || "<li>All 11 starters have high projected minutes and zero cameo flags.</li>";
+
+      if (squad.starters.length > 0) {
+        inspectPlayer(squad.starters.find(p => p.isCaptain) || squad.starters[0]);
+      }
+    }
+
+    function renderVariationPills() {
+      const bar = document.getElementById("var-pills-bar");
+      if (currentMode !== "best") {
+        bar.style.display = "none";
+        return;
+      }
+      bar.style.display = "flex";
+      bar.innerHTML = DATA.variations.map((v, i) => `
+        <span class="var-pill ${i === currentVarIdx ? 'active' : ''}" onclick="selectVariation(${i})">
+          #${i + 1}: ${v.formation} (${v.expectedPoints.toFixed(1)}p • £${v.totalCost.toFixed(1)}m)
+        </span>
+      `).join("");
+    }
+
+    function selectVariation(idx) {
+      currentMode = "best";
+      currentVarIdx = idx;
+      updateTabs();
+      renderVariationPills();
+      renderSquadView(DATA.variations[currentVarIdx]);
+    }
+
+    function nextVariation() {
+      currentMode = "best";
+      currentVarIdx = (currentVarIdx + 1) % DATA.variations.length;
+      updateTabs();
+      renderVariationPills();
+      renderSquadView(DATA.variations[currentVarIdx]);
+    }
+
+    function generateRandomHighScoringSquad() {
+      // Dynamically builds a new valid £100m 15-player squad from DATA.playerPool
+      const formations = [[3,4,3], [3,5,2], [4,4,2], [4,3,3]];
+      const form = formations[Math.floor(Math.random() * formations.length)];
+      const [nD, nM, nF] = form;
+
+      const shuffleTop = (arr, topN) => {
+        const slice = arr.slice(0, topN);
+        for (let i = slice.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [slice[i], slice[j]] = [slice[j], slice[i]];
+        }
+        return slice;
+      };
+
+      const gkps = DATA.playerPool.filter(p => p.pos === "GKP").sort((a,b) => b.xp - a.xp);
+      const defs = DATA.playerPool.filter(p => p.pos === "DEF").sort((a,b) => b.xp - a.xp);
+      const mids = DATA.playerPool.filter(p => p.pos === "MID").sort((a,b) => b.xp - a.xp);
+      const fwds = DATA.playerPool.filter(p => p.pos === "FWD").sort((a,b) => b.xp - a.xp);
+
+      for (let attempt = 0; attempt < 250; attempt++) {
+        const clubs = {};
+        const used = new Set();
+        const pickGroup = (pool, count) => {
+          const out = [];
+          for (const cand of pool) {
+            if (out.length === count) break;
+            if (used.has(cand.id)) continue;
+            if ((clubs[cand.team] || 0) >= 3) continue;
+            clubs[cand.team] = (clubs[cand.team] || 0) + 1;
+            used.add(cand.id);
+            out.push({...cand, isCaptain: false, isVice: false, displayXp: cand.xp});
+          }
+          return out.length === count ? out : null;
+        };
+
+        const gStart = pickGroup(shuffleTop(gkps, 4), 1);
+        const dStart = pickGroup(shuffleTop(defs, 9), nD);
+        const mStart = pickGroup(shuffleTop(mids, 9), nM);
+        const fStart = pickGroup(shuffleTop(fwds, 7), nF);
+        if (!gStart || !dStart || !mStart || !fStart) continue;
+
+        const starters = [...gStart, ...dStart, ...mStart, ...fStart];
+        const gBench = pickGroup([...gkps].sort((a,b) => a.price - b.price), 1);
+        const dBench = pickGroup([...defs].sort((a,b) => a.price - b.price), 5 - nD);
+        const mBench = pickGroup([...mids].sort((a,b) => a.price - b.price), 5 - nM);
+        const fBench = pickGroup([...fwds].sort((a,b) => a.price - b.price), 3 - nF);
+        if (!gBench || !dBench || !mBench || !fBench) continue;
+
+        const all15 = [...starters, ...gBench, ...dBench, ...mBench, ...fBench];
+        const cost = all15.reduce((s, p) => s + p.price, 0);
+        if (cost > 100.0) continue;
+
+        // Sort starters for Captain & Vice
+        const ranked = [...starters].sort((a,b) => b.xp - a.xp);
+        const cap = ranked[0];
+        const vice = ranked[1];
+        starters.forEach(p => {
+          if (p.id === cap.id) { p.isCaptain = true; p.displayXp = +(p.xp * 2).toFixed(1); }
+          else if (p.id === vice.id) { p.isVice = true; }
+        });
+
+        const totXp = +(starters.reduce((s, p) => s + p.displayXp, 0)).toFixed(1);
+        if (totXp < 70.5) continue;
+
+        const customSquad = {
+          title: `Custom Generated Squad (${nD}-${nM}-${nF})`,
+          subtitle: `Dynamically sampled £100m arrangement projecting ${totXp} pts (zero bias)`,
+          formation: `${nD}-${nM}-${nF}`,
+          totalCost: +cost.toFixed(1),
+          budget: 100.0,
+          expectedPoints: totXp,
+          floor: starters.reduce((s, p) => s + p.floor, 0) + cap.floor,
+          ceiling: starters.reduce((s, p) => s + p.ceiling, 0) + cap.ceiling,
+          captain: cap.name,
+          viceCaptain: vice.name,
+          starters,
+          bench: [...gBench, ...[...dBench, ...mBench, ...fBench].sort((a,b) => b.xp - a.xp)],
+          notes: [
+            `Custom ${nD}-${nM}-${nF} build (£${cost.toFixed(1)}m / £100.0m) with max 3 players per club.`,
+            `Captain ${cap.name} (${cap.displayXp}p) + Vice ${vice.name} (${vice.xp}p).`
+          ]
+        };
+        renderSquadView(customSquad);
+        return;
+      }
+    }
+
+    function updateTabs() {
+      document.getElementById("tab-best").classList.toggle("active", currentMode === "best");
+      document.getElementById("tab-mine").classList.toggle("active", currentMode === "mine");
+      document.getElementById("tab-dream").classList.toggle("active", currentMode === "dream");
+    }
+
+    function switchMode(mode) {
+      currentMode = mode;
+      updateTabs();
+      renderVariationPills();
+      if (mode === "best") renderSquadView(DATA.variations[currentVarIdx]);
+      else if (mode === "mine") renderSquadView(DATA.mySquad);
+      else if (mode === "dream") renderSquadView(DATA.dreamXi);
+    }
+
+    // Populate transfers panel
+    document.getElementById("transfers-list").innerHTML = DATA.transfers.map(t => `
+      <div class="transfer-row">
+        <div>
+          <strong>${t.out}</strong> → <strong style="color:var(--fpl-green)">${t.in}</strong>
+          <div style="font-size:0.74rem;color:#bbb;">${t.inTeam} vs ${t.inFix} (${t.costDiff >= 0 ? '+' : ''}${t.costDiff.toFixed(1)}m)</div>
+        </div>
+        <span class="gain-badge">+${t.xpGain.toFixed(1)} xP</span>
+      </div>
+    `).join("");
+
+    // Initial render
+    selectVariation(0);
+  </script>
+</body>
+</html>
