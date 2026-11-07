@@ -33,6 +33,13 @@ CLUB_KITS: Dict[str, Tuple[str, str, str | None, str]] = {
     "HUL": ("#F5A122", "#111111", "#111111", "#FFFFFF"),
     "AVL": ("#670E36", "#95BFE5", None, "#FFFFFF"),
     "BOU": ("#DA291C", "#111111", "#111111", "#FFFFFF"),
+    "COV": ("#59CBE8", "#1D2951", None, "#FFFFFF"),
+    "CRY": ("#1B458F", "#C4122E", "#C4122E", "#FFFFFF"),
+    "IPS": ("#3A64A3", "#FFFFFF", None, "#FFFFFF"),
+    "FUL": ("#FFFFFF", "#111111", None, "#111111"),
+    "NEW": ("#111111", "#FFFFFF", "#FFFFFF", "#FFFFFF"),
+    "MUN": ("#DA291C", "#FFFFFF", None, "#FFFFFF"),
+    "NFO": ("#DD0000", "#FFFFFF", None, "#FFFFFF"),
 }
 
 

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from fpl_data import DATA_DIR, PlayerRecord, load_players, sync_live_fpl_data
-from neural_model import fetch_real_merged_gw_samples, get_or_train_neural_net
+from neural_model import get_or_train_neural_net
 from news_scraper import load_all_news, scrape_sports_websites
 from pitch_renderer import render_pitch_figure
 from predictor import (
@@ -38,26 +38,36 @@ REPORT_PATH = DATA_DIR / "latest_report.md"
 def _match_squad_players(
     all_players: List[PlayerRecord], squad_cfg: dict
 ) -> List[PlayerRecord]:
-    by_name: Dict[str, PlayerRecord] = {
-        p.web_name.lower(): p for p in all_players
-    }
     matched: List[PlayerRecord] = []
     for item in squad_cfg.get("squad", []):
         name = item["name"].strip().lower()
-        if name in by_name:
-            matched.append(by_name[name])
-        else:
-            # Fuzzy fallback match
-            found = next(
-                (
-                    p
-                    for p in all_players
-                    if name in p.web_name.lower() or name in p.full_name.lower()
-                ),
-                None,
-            )
-            if found:
-                matched.append(found)
+        team = item.get("team", "").strip().upper()
+        pos = item.get("position", "").strip().upper()
+
+        exact = next(
+            (
+                p
+                for p in all_players
+                if p.web_name.lower() == name
+                and (not team or p.team_short == team)
+                and (not pos or p.position == pos)
+            ),
+            None,
+        )
+        if exact:
+            matched.append(exact)
+            continue
+
+        by_pos = next(
+            (
+                p
+                for p in all_players
+                if p.web_name.lower() == name and (not pos or p.position == pos)
+            ),
+            None,
+        )
+        if by_pos:
+            matched.append(by_pos)
     return matched
 
 
@@ -349,11 +359,7 @@ def cmd_add_news(args: argparse.Namespace) -> None:
 
 
 def cmd_train_nn(args: argparse.Namespace) -> None:
-    if args.fetch_real:
-        print("Fetching real historical gameweek CSVs (2022-23 to 2024-25)...")
-        real_samples = fetch_real_merged_gw_samples()
-        print(f"Fetched {len(real_samples)} real Premier League GW training samples.")
-    print("Training Supervised FPL Neural Network (14 -> 24 -> 12 -> 1)...")
+    print("Training Supervised FPL Neural Network (22 -> 36 -> 18 -> 1) on Real 2026/27 PL Match Logs...")
     net = get_or_train_neural_net(force_retrain=True)
     print(json.dumps(net.metrics, indent=2))
 

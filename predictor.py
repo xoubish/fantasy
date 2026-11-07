@@ -82,8 +82,9 @@ def predict_player(
 
     # 1. Poisson model for expected goals conceded (lambda_gc)
     home_def_factor = 0.88 if player.is_home else 1.12
-    opp_att_factor = (player.opp_attack_strength / 1140.0) ** 1.35
-    lambda_gc = max(0.35, player.xgc_per_90 * home_def_factor * opp_att_factor)
+    mismatch_ratio = (player.opp_attack_strength / max(player.team_defence_strength, 950)) ** 1.35
+    base_xgc = max(0.55, min(2.2, player.xgc_per_90 if player.xgc_per_90 > 0.1 else 1.25))
+    lambda_gc = max(0.35, base_xgc * home_def_factor * mismatch_ratio)
 
     cs_prob = _poisson_prob(lambda_gc, 0)
     p_gc_2_3 = _poisson_prob(lambda_gc, 2) + _poisson_prob(lambda_gc, 3)
@@ -97,7 +98,7 @@ def predict_player(
 
     # 2. Expected Goals (xG) & Expected Assists (xA) for this match
     home_att_factor = 1.10 if player.is_home else 0.93
-    opp_def_factor = (1140.0 / max(player.opp_defence_strength, 950)) ** 1.30
+    opp_def_factor = (player.team_attack_strength / max(player.opp_defence_strength, 950)) ** 1.30
     match_att_mult = home_att_factor * opp_def_factor
 
     pen_boost = 0.10 if player.penalties_order == 1 else 0.0
@@ -107,14 +108,6 @@ def predict_player(
     exp_a = (player.xa_per_90 + corner_boost) * match_att_mult
 
     # 3. Calculate 90-minute Expected Points from Official FPL Scoring Rules:
-    # - 2 pts for playing 60+ mins
-    # - Clean Sheet: +4 pts (GKP/DEF), +1 pt (MID), 0 pts (FWD)
-    # - Goals Scored: +10 pts (GKP), +6 pts (DEF), +5 pts (MID), +4 pts (FWD)
-    # - Assists: +3 pts (All positions)
-    # - Goals Conceded (GKP/DEF only): -1 pt for 2-3 GC, -2 pts for 4-5 GC, -3 pts for 6+ GC
-    # - Goalkeeper Saves: +1 pt per 3 saves (scaled by opponent attacking pressure)
-    # - Penalty Miss: -2 pts (~20% of penalties taken are missed/saved)
-    # - Yellow Cards: -1 pt (~12-16% per match for outfield players)
     appearance_pts = APPEARANCE_60PLUS_PTS
     cs_pts = cs_prob * CS_POINTS[player.position]
     gc_penalty = (
@@ -123,12 +116,18 @@ def predict_player(
         else 0.0
     )
     expected_saves = (
-        2.4 * (player.opp_attack_strength / 1140.0)
+        max(2.1, player.saves_per_90) * (player.opp_attack_strength / 1140.0)
         if player.position == "GKP"
         else 0.0
     )
     save_pts = expected_saves / 3.0
     attack_pts = exp_g * GOAL_POINTS[player.position] + exp_a * ASSIST_POINTS
+    # 2025/26+ FPL Defensive Contribution (CBIT + tackles + recoveries) bonus expectation
+    def_contrib_pts = (
+        min(1.6, max(0.0, (player.defensive_contribution_per_90 - 5.0) * 0.22))
+        if player.position in ("DEF", "MID")
+        else 0.0
+    )
     pen_miss_penalty = (
         PENALTY_MISS_PTS * 0.03 if player.penalties_order == 1 else 0.0
     )
@@ -149,15 +148,14 @@ def predict_player(
         + gc_penalty
         + save_pts
         + attack_pts
+        + def_contrib_pts
         + pen_miss_penalty
         + card_penalty
         + bonus_pts
     )
 
-    # 4. End-to-End 18-Feature Supervised Neural Network (18 -> 32 -> 16 -> 1)
-    # Zero hand-picked blending weights: all FPL rule multipliers, Poisson CS/GC2 odds,
-    # 3-year PPG, form, xG/90, xA/90, BPS/90, set-piece duties, and opponent ratings
-    # are fed directly into the network input vector!
+    # 4. End-to-End 22-Feature Supervised Neural Network (22 -> 36 -> 18 -> 1)
+    # Trained directly on real 2026/27 Premier League match logs!
     nn_model = _get_nn()
     nn_90_xp = nn_model.predict(extract_features(player))
     blended_90_xp = nn_90_xp
@@ -383,7 +381,7 @@ def build_dream_xi(
     healthy = [
         p
         for p in all_predictions
-        if p.news.risk_level not in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK")
+        if p.news.risk_level in ("NONE", "POSITIVE") and p.player.minutes >= 270
     ]
     # Keep top candidates per position to keep combinatorial search instant
     top_gkps = sorted(
@@ -494,7 +492,7 @@ def recommend_single_transfers(
                 continue
             if p_in.player.price > max_price:
                 continue
-            if p_in.news.risk_level in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK"):
+            if p_in.news.risk_level not in ("NONE", "POSITIVE") or p_in.player.minutes < 270:
                 continue
 
             # Check max 3 per club after removing p_out
@@ -550,7 +548,7 @@ def get_best_squad_of_the_week(
     healthy = [
         p
         for p in all_predictions
-        if p.news.risk_level not in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK")
+        if p.news.risk_level in ("NONE", "POSITIVE") and p.player.minutes >= 270
     ]
 
     gkps = sorted(
@@ -715,57 +713,57 @@ def get_best_squad_variations(
     healthy = [
         p
         for p in all_predictions
-        if p.news.risk_level not in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK")
+        if p.news.risk_level in ("NONE", "POSITIVE") and p.player.minutes >= 270
     ]
 
-    # Define distinct tactical archetypes for each variation
+    # Define 6 distinct tactical archetypes using ONLY real active 2026/27 Premier League players
     archetypes = [
         {
-            "name": "Variation 1: Balanced Optimal (3-5-2)",
-            "subtitle": "Highest raw expected points across a 5-man midfield & 2 forwards",
-            "formations": [(3, 5, 2)],
+            "name": "Variation 1: Neural Net Optimal (3-4-3)",
+            "subtitle": "Highest raw 22-feature Neural Network xP under £100.0m across all 20 PL clubs",
+            "formations": [(3, 4, 3), (3, 5, 2)],
             "must_include": set(),
             "exclude_starters": set(),
             "bench_seed": 0,
         },
         {
-            "name": "Variation 2: Haaland + Saka + Palmer 'Threemium' (3-4-3)",
-            "subtitle": "Fits Haaland (£14.5m), Saka (£10.5m) & Palmer (£11.0m) in a 3-forward attack",
+            "name": "Variation 2: Haaland (£15.8m) + Gabriel + De Cuyper Power Build (3-4-3)",
+            "subtitle": "Fits £15.8m Haaland alongside FPL's #1 defender De Cuyper & Arsenal's Gabriel",
             "formations": [(3, 4, 3)],
-            "must_include": {"Haaland", "Saka", "Palmer"},
+            "must_include": {"Haaland", "De Cuyper", "Gabriel"},
             "exclude_starters": set(),
             "bench_seed": 1,
         },
         {
-            "name": "Variation 3: Heavy Metal Front Three (3-4-3)",
-            "subtitle": "Isak + Watkins + Cunha up front backed by Son, Saka, Palmer & Bruno",
+            "name": "Variation 3: High-Value Form & xGI Stars (3-4-3)",
+            "subtitle": "Targets top 2026/27 points-per-million stars: Barry, Evanilson, Tavernier, Dewsbury-Hall & Isak",
             "formations": [(3, 4, 3)],
-            "must_include": {"Watkins", "Isak", "B.Fernandes"},
-            "exclude_starters": {"Groß", "Mbeumo", "Ndiaye"},
+            "must_include": {"Isak", "Barry", "Evanilson", "Tavernier"},
+            "exclude_starters": {"Haaland"},
             "bench_seed": 2,
         },
         {
-            "name": "Variation 4: Clean-Sheet Fortress (4-4-2)",
-            "subtitle": "4 elite home/clean-sheet defenders (Gabriel, Saliba, Gvardiol, Robinson) + Raya",
+            "name": "Variation 4: Clean-Sheet & CBIT Fortress (4-4-2)",
+            "subtitle": "4 elite clean-sheet & defensive-contribution leaders (Gabriel, De Cuyper, Tarkowski, Konsa)",
             "formations": [(4, 4, 2)],
-            "must_include": {"Saliba", "Robinson", "Gordon"},
-            "exclude_starters": {"Pedro Porro", "Ndiaye"},
+            "must_include": {"Gabriel", "De Cuyper", "Tarkowski", "Konsa"},
+            "exclude_starters": {"Vuskovic"},
             "bench_seed": 3,
         },
         {
-            "name": "Variation 5: Differential Upside & Wingers (3-5-2)",
-            "subtitle": "Targets high-ceiling differentials: Son, Bowen, Gordon, Bruno & Watkins",
+            "name": "Variation 5: Weak-Opponent Mismatch Hunters (3-5-2)",
+            "subtitle": "Targets weak defences/attacks in GW10: ARS vs HUL, CHE vs SUN, EVE vs COV, BHA vs BRE",
             "formations": [(3, 5, 2)],
-            "must_include": {"Son", "Bowen", "Gordon", "Watkins"},
-            "exclude_starters": {"Ødegaard", "Groß", "Isak"},
+            "must_include": {"Palmer", "Rogers", "Rice", "Dewsbury-Hall"},
+            "exclude_starters": {"Tavernier"},
             "bench_seed": 4,
         },
         {
-            "name": "Variation 6: All-Out Attacking Fullbacks + Haaland (4-3-3)",
-            "subtitle": "Haaland + Solanke + Cunha up top with attacking fullbacks Hall & Porro",
-            "formations": [(4, 3, 3)],
-            "must_include": {"Haaland", "Solanke", "Hall"},
-            "exclude_starters": {"Gvardiol", "Isak", "Ødegaard"},
+            "name": "Variation 6: Balanced No-Haaland Super-Squad (3-4-3)",
+            "subtitle": "Spreads £15.8m Haaland budget across Palmer, Isak, Gabriel, Raya, Groß & N.Jackson",
+            "formations": [(3, 4, 3)],
+            "must_include": {"Raya", "Palmer", "Isak", "N.Jackson"},
+            "exclude_starters": {"Haaland", "Verbruggen"},
             "bench_seed": 5,
         },
     ]

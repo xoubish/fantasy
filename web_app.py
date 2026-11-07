@@ -54,6 +54,9 @@ def _serialize_pred(p: PlayerPrediction, is_cap: bool = False, is_vice: bool = F
         "csProb": int(round(p.clean_sheet_prob * 100)),
         "gc2Prob": int(round(p.concede_2plus_prob * 100)),
         "ppg3Yr": p.player.historical_ppg_3yr,
+        "seasonPpg": p.player.points_per_game,
+        "defContrib90": p.player.defensive_contribution_per_90,
+        "valueSeason": p.player.value_season,
         "form": p.player.form,
         "nnXp": round(p.nn_xp_90, 1),
         "ruleXp": round(p.rule_xp_90, 1),
@@ -110,13 +113,32 @@ def build_web_payload() -> Dict[str, Any]:
 
     all_preds = [predict_player(p, articles) for p in all_players]
 
-    # Match user's 15 players
-    by_name = {p.player.web_name.lower(): p for p in all_preds}
-    user_preds = [
-        by_name[item["name"].strip().lower()]
-        for item in squad_cfg.get("squad", [])
-        if item["name"].strip().lower() in by_name
-    ]
+    # Match user's 15 players strictly by (name, team, position)
+    user_preds: List[PlayerPrediction] = []
+    for item in squad_cfg.get("squad", []):
+        nm = item["name"].strip().lower()
+        tm = item.get("team", "").strip().upper()
+        ps = item.get("position", "").strip().upper()
+        found = next(
+            (
+                p
+                for p in all_preds
+                if p.player.web_name.lower() == nm
+                and (not tm or p.player.team_short == tm)
+                and (not ps or p.player.position == ps)
+            ),
+            next(
+                (
+                    p
+                    for p in all_preds
+                    if p.player.web_name.lower() == nm
+                    and (not ps or p.player.position == ps)
+                ),
+                None,
+            ),
+        )
+        if found:
+            user_preds.append(found)
 
     user_opt = optimize_starting_xi(user_preds)
     user_cost = sum(p.player.price for p in user_preds)
@@ -167,11 +189,16 @@ def build_web_payload() -> Dict[str, Any]:
         for t in transfers
     ]
 
-    healthy_pool_json = [
-        _serialize_pred(p)
-        for p in all_preds
-        if p.news.risk_level not in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK")
-    ]
+    healthy_active = sorted(
+        [
+            p
+            for p in all_preds
+            if p.news.risk_level in ("NONE", "POSITIVE") and p.player.minutes >= 270
+        ],
+        key=lambda x: x.expected_points,
+        reverse=True,
+    )[:65]
+    healthy_pool_json = [_serialize_pred(p) for p in healthy_active]
 
     nn_net = get_or_train_neural_net(force_retrain=False)
 
@@ -622,7 +649,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <div class="card-panel">
-          <h3>🧠 End-to-End Neural Net (18→32→16→1)</h3>
+          <h3>🧠 22-Feature Neural Net (22→36→18→1)</h3>
           <div id="nn-metrics-box" style="font-size:0.81rem; line-height:1.45; color:#e5e0eb;"></div>
         </div>
 
@@ -661,9 +688,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       MUN: { body: "#DA291C", sleeve: "#FFFFFF", stripe: null },
       WHU: { body: "#7A263A", sleeve: "#1BB1E7", stripe: null },
       NFO: { body: "#DD0000", sleeve: "#FFFFFF", stripe: null },
-      WOL: { body: "#FDB913", sleeve: "#231F20", stripe: null },
-      SOU: { body: "#D71920", sleeve: "#FFFFFF", stripe: "#FFFFFF" },
-      LEI: { body: "#003090", sleeve: "#FFFFFF", stripe: null }
+      COV: { body: "#59CBE8", sleeve: "#1D2951", stripe: null },
+      CRY: { body: "#1B458F", sleeve: "#C4122E", stripe: "#C4122E" },
+      IPS: { body: "#3A64A3", sleeve: "#FFFFFF", stripe: null }
     };
 
     let currentMode = "best";
@@ -717,8 +744,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div style="color:var(--fpl-green);font-weight:700;margin-bottom:8px;">
           Fixture: ${p.opponent} | Projected: ${p.displayXp.toFixed(1)} xP (Range: ${p.floor}–${p.ceiling} pts)
         </div>
-        <div>• <strong>🧠 Neural Net 90m:</strong> ${p.nnXp.toFixed(1)}p | <strong>📐 Rule Engine 90m:</strong> ${p.ruleXp.toFixed(1)}p</div>
-        <div>• <strong>3-Year Historical PPG:</strong> ${p.ppg3Yr.toFixed(1)} pts/90 (Form: ${p.form})</div>
+        <div>• <strong>🧠 Neural Net 90m:</strong> ${p.nnXp.toFixed(1)}p | <strong>📐 Rule Diagnostic:</strong> ${p.ruleXp.toFixed(1)}p</div>
+        <div>• <strong>2026/27 PPG:</strong> ${p.seasonPpg.toFixed(1)} (Form: ${p.form} | Value: ${p.valueSeason.toFixed(1)} pts/£m)</div>
+        <div>• <strong>CBIT Def. Contrib/90:</strong> ${p.defContrib90.toFixed(1)} | <strong>3-Yr Pedigree PPG:</strong> ${p.ppg3Yr.toFixed(1)}</div>
         <div>• <strong>Clean Sheet Odds:</strong> ${p.csProb}% | <strong>Concede 2+ Goals Risk:</strong> ${p.gc2Prob}%</div>
         <div>• <strong>Start Probability:</strong> ${p.startProb}% | <strong>1-Pt Cameo Risk:</strong> ${p.cameoProb}%</div>
         <div style="margin-top:6px;padding:6px 8px;background:rgba(0,0,0,0.3);border-radius:6px;">

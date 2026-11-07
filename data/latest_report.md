@@ -1,32 +1,32 @@
 # FPL Weekly Data & News Prediction Report
 
 - **Recommended Formation:** `4-4-2`
-- **Captain (2x):** **Palmer** (SUN (A)) — `15.4 xP`
-- **Vice-Captain:** **Ødegaard** (HUL (H)) — `6.3 xP`
-- **Projected Total Score:** **63.7 pts** *(Floor: 24 pts | Ceiling: 131 pts)*
+- **Captain (2x):** **Gabriel** (HUL (H)) — `12.0 xP`
+- **Vice-Captain:** **Palmer** (SUN (A)) — `5.6 xP`
+- **Projected Total Score:** **55.8 pts** *(Floor: 26 pts | Ceiling: 123 pts)*
 
 ## 1. Optimal Starting XI
 
 | Pos | Player | Club | Fixture | 3Yr PPG | CS% | 2+GC% | Start% | Cameo% | News Risk | xP (Range) |
 | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- | :---: |
-| **GKP** | **Verbruggen** | BHA | `BRE (H)` | 3.4 | 36% | 27% | 92% | 4% | `NONE` | **3.9** *(2–9)* |
-| **DEF** | **Virgil** | LIV | `CRY (A)` | 4.0 | 39% | 25% | 92% | 4% | `NONE` | **4.4** *(2–9)* |
-| **DEF** | **Dunk** | BHA | `BRE (H)` | 3.2 | 36% | 27% | 92% | 4% | `NONE` | **3.6** *(2–8)* |
-| **DEF** | **Gabriel** ★ | ARS | `HUL (H)` | 4.6 | 60% | 9% | 92% | 4% | `NONE` | **6.2** *(3–11)* |
-| **DEF** | **Justin** | LEE | `TOT (H)` | 2.7 | 18% | 51% | 92% | 4% | `NONE` | **2.6** *(1–7)* |
-| **MID** | **Rice** | ARS | `HUL (H)` | 4.5 | 60% | 9% | 92% | 4% | `NONE` | **4.7** *(2–11)* |
-| **MID** | **Ødegaard** **(V)** | ARS | `HUL (H)` | 5.5 | 60% | 9% | 92% | 4% | `NONE` | **6.3** *(2–13)* |
-| **MID** | **Palmer** **(C)** | CHE | `SUN (A)` | 7.2 | 36% | 27% | 92% | 4% | `NONE` | **15.4** *(4–28)* |
-| **MID** | **Groß** ★ | BHA | `BRE (H)` | 4.7 | 36% | 27% | 92% | 4% | `NONE` | **5.8** *(2–12)* |
-| **FWD** | **Thiago** | BRE | `BHA (A)` | 4.2 | 20% | 48% | 92% | 4% | `NONE` | **4.0** *(2–10)* |
-| **FWD** | **Isak** ★ | LIV | `CRY (A)` | 6.6 | 39% | 25% | 92% | 4% | `NONE` | **6.2** *(2–13)* |
+| **GKP** | **Verbruggen** | BHA | `BRE (H)` | 3.4 | 33% | 31% | 94% | 3% | `NONE` | **3.6** *(2–8)* |
+| **DEF** | **Virgil** | LIV | `CRY (A)` | 4.0 | 35% | 28% | 94% | 3% | `NONE` | **5.2** *(2–10)* |
+| **DEF** | **Dunk** | BHA | `BRE (H)` | 2.9 | 32% | 32% | 94% | 3% | `NONE` | **3.1** *(2–8)* |
+| **DEF** | **Gabriel** ★ **(C)** | ARS | `HUL (H)` | 5.3 | 57% | 10% | 94% | 3% | `NONE` | **12.0** *(6–22)* |
+| **DEF** | **Justin** | LEE | `TOT (H)` | 3.3 | 43% | 21% | 94% | 3% | `NONE` | **4.1** *(2–9)* |
+| **MID** | **Rice** | ARS | `HUL (H)` | 4.8 | 59% | 10% | 94% | 3% | `NONE` | **4.5** *(2–11)* |
+| **MID** | **Ødegaard** | ARS | `HUL (H)` | 5.0 | 59% | 10% | 94% | 3% | `NONE` | **4.6** *(2–11)* |
+| **MID** | **Palmer** **(V)** | CHE | `SUN (A)` | 6.5 | 26% | 38% | 94% | 3% | `NONE` | **5.6** *(2–12)* |
+| **MID** | **Groß** ★ | BHA | `BRE (H)` | 4.7 | 32% | 31% | 94% | 3% | `NONE` | **5.5** *(2–12)* |
+| **FWD** | **Thiago** | BRE | `BHA (A)` | 4.7 | 18% | 51% | 94% | 3% | `NONE` | **2.6** *(2–9)* |
+| **FWD** | **Isak** ★ | LIV | `CRY (A)` | 6.8 | 34% | 28% | 94% | 3% | `NONE` | **4.8** *(2–11)* |
 
 ## 2. Recommended Bench Order
 
 | Slot | Pos | Player | Club | Fixture | Start% | Cameo% | News / Press Conference Status | xP |
 | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- | :---: |
-| **GKP** | GKP | **Wilson** | SUN | `EVE (A)` | 92% | 4% | Regular starter with no negative press conference or injury flags. | **2.5** |
-| **1. Sub** | MID | **M.Sangaré** | BRE | `BHA (A)` | 92% | 4% | Regular starter with no negative press conference or injury flags. | **2.3** |
+| **GKP** | GKP | **Wilson** | COV | `EVE (A)` | 5% | 10% | Backup squad player (0 mins played this season). | **0.2** |
+| **1. Sub** | MID | **M.Sangaré** | BRE | `BHA (A)` | 80% | 10% | Regular starter with no negative press conference or injury flags. | **2.3** |
 | **2. Sub** | DEF | **O'Reilly** | MCI | `NFO (A)` | 20% | 55% | Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches — high risk of a 1-point bench cameo! | **1.4** |
 | **3. Sub** | FWD | **João Pedro** | CHE | `SUN (A)` | 0% | 0% | Ruled out (0% chance of playing) due to injury/suspension flag. | **0.0** |
 
@@ -35,9 +35,21 @@
 - Cameo Trap Alert (O'Reilly - BENCHED): Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches — high risk of a 1-point bench cameo!
 - Unavailable (João Pedro): Buried in 3rd bench slot (0% start probability).
 - Fixture Hedge (Thiago vs BHA defense): Starting Thiago alongside your BHA defensive assets hedges your floor so you still get points if BHA concede.
-- **O'Reilly News:** [FPL Official] Manager Enzo Maresca states O'Reilly is not 100% fit and needs rest before the international break.
+- **Rice News:** [BBC Sport Premier League] Has Anderson lived up to the hype after Man City move?
+- **Rice News:** [The Guardian Premier League] Premier League news: Arteta insists Rice isn’t playing too many games
+- **Rice News:** [The Guardian Premier League] ‘We had to dig in’: Arsenal’s Anfield win was performance of champions, says Rice
+- **Rice News:** [The Guardian Premier League] Premier League today: How to watch, TV channels & live stream
+- **Groß News:** [BBC Sport Premier League] Liverpool earn first league win at Anfield with victory over Brighton
+- **Thiago News:** [BBC Sport Premier League] Thiago on target as Brentford beat Forest
+- **Isak News:** [BBC Sport Premier League] Liverpool earn first league win at Anfield with victory over Brighton
+- **Isak News:** [The Guardian Premier League] Andy Madley and VAR should take credit – they got major Anfield calls right | Chris Foy
+- **Isak News:** [The Guardian Premier League] ‘We had to dig in’: Arsenal’s Anfield win was performance of champions, says Rice
+- **Isak News:** [The Guardian Premier League] Premier League: 10 talking points from the weekend’s action
+- **Isak News:** [The Guardian Premier League] ‘We have to tell them to go down’: Iraola responds to Isak penalty denial for Liverpool
+- **Isak News:** [The Guardian Premier League] Liverpool 0-1 Arsenal: Premier League – as it happened
+- **Wilson News:** [The Guardian Premier League] Arsenal have everything they need to repeat as Premier League champions | Jonathan Wilson
 - **O'Reilly News:** [Manchester Evening News / Enzo Maresca Press Conference] Nico O'Reilly not 100 percent and needs rest over international break
-- **João Pedro News:** [FPL Official] Injured - expected back after the international break
+- **João Pedro News:** [FPL Official] Thigh injury - Unknown return date
 - **João Pedro News:** [FPL Official Flag] João Pedro red-flagged and unavailable
 
 ## 4. Top 1-Transfer Upgrades (FT: 0 | Bank: £0.5m)
@@ -46,24 +58,24 @@
 
 | Out | In | Club & Fixture | Cost Diff | Starting XI Gain | Hit-Adjusted Gain |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| João Pedro (£6.0m) | **Ndiaye** (£5.6m) | EVE `SUN (H)` | -0.4m | **+2.6 xP** | `-1.4 xP` |
-| Justin (£4.4m) | **Hall** (£4.9m) | NEW `IPS (H)` | +0.5m | **+2.5 xP** | `-1.5 xP` |
-| O'Reilly (£4.8m) | **Hall** (£4.9m) | NEW `IPS (H)` | +0.1m | **+2.5 xP** | `-1.5 xP` |
-| João Pedro (£6.0m) | **Wood** (£6.5m) | NFO `MCI (H)` | +0.5m | **+2.4 xP** | `-1.6 xP` |
-| O'Reilly (£4.8m) | **Robinson** (£5.0m) | FUL `SOU (H)` | +0.2m | **+2.2 xP** | `-1.8 xP` |
+| João Pedro (£7.7m) | **Evanilson** (£6.5m) | BOU `IPS (A)` | -1.2m | **+3.1 xP** | `-0.9 xP` |
+| Thiago (£7.8m) | **Evanilson** (£6.5m) | BOU `IPS (A)` | -1.3m | **+3.0 xP** | `-1.0 xP` |
+| O'Reilly (£6.2m) | **Branthwaite** (£5.5m) | EVE `COV (H)` | -0.7m | **+2.5 xP** | `-1.5 xP` |
+| O'Reilly (£6.2m) | **Tarkowski** (£6.2m) | EVE `COV (H)` | +0.0m | **+2.3 xP** | `-1.7 xP` |
+| O'Reilly (£6.2m) | **Jacquet** (£5.1m) | LIV `CRY (A)` | -1.1m | **+2.3 xP** | `-1.7 xP` |
 
-## 5. Unlimited Free Hit / Dream XI Comparison (`3-5-2` — 81.0 xP)
+## 5. Unlimited Free Hit / Dream XI Comparison (`5-3-2` — 64.0 xP)
 
 | Pos | Player | Club | Price | Fixture | 3Yr PPG | xP |
 | :--- | :--- | :--- | :---: | :--- | :---: | :---: |
-| **GKP** | **Pickford** | EVE | £5.0m | `SUN (H)` | 4.0 | **4.8** |
-| **DEF** | **Gabriel** | ARS | £6.4m | `HUL (H)` | 4.6 | **6.2** |
-| **DEF** | **Saliba** | ARS | £6.2m | `HUL (H)` | 4.3 | **5.6** |
-| **DEF** | **Hall** | NEW | £4.9m | `IPS (H)` | 4.2 | **5.1** |
-| **MID** | **Saka** **(C)** | ARS | £10.5m | `HUL (H)` | 7.0 | **17.7** |
-| **MID** | **Palmer** **(V)** | CHE | £11.0m | `SUN (A)` | 7.2 | **7.7** |
-| **MID** | **B.Fernandes** | MUN | £8.5m | `LEI (H)` | 5.0 | **7.0** |
-| **MID** | **Gordon** | NEW | £7.4m | `IPS (H)` | 5.5 | **6.9** |
-| **MID** | **Son** | TOT | £9.6m | `LEE (A)` | 6.3 | **6.7** |
-| **FWD** | **Haaland** | MCI | £14.5m | `NFO (A)` | 7.6 | **7.2** |
-| **FWD** | **Isak** | LIV | £9.5m | `CRY (A)` | 6.6 | **6.2** |
+| **GKP** | **Donnarumma** | MCI | £5.5m | `NFO (A)` | 3.9 | **4.8** |
+| **DEF** | **Gabriel** **(C)** | ARS | £8.1m | `HUL (H)` | 5.3 | **12.0** |
+| **DEF** | **Virgil** | LIV | £6.4m | `CRY (A)` | 4.0 | **5.2** |
+| **DEF** | **Konsa** | ARS | £4.8m | `HUL (H)` | 3.2 | **5.1** |
+| **DEF** | **Branthwaite** | EVE | £5.5m | `COV (H)` | 3.6 | **5.1** |
+| **DEF** | **Calafiori** | ARS | £5.9m | `HUL (H)` | 5.3 | **5.1** |
+| **MID** | **Palmer** | CHE | £9.8m | `SUN (A)` | 6.5 | **5.6** |
+| **MID** | **Groß** | BHA | £6.3m | `BRE (H)` | 4.7 | **5.5** |
+| **MID** | **Rogers** | CHE | £8.2m | `SUN (A)` | 4.8 | **4.9** |
+| **FWD** | **Evanilson** **(V)** | BOU | £6.5m | `IPS (A)` | 4.6 | **5.6** |
+| **FWD** | **Haaland** | MCI | £15.8m | `NFO (A)` | 7.0 | **5.1** |

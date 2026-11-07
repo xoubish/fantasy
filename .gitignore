@@ -7,3 +7,4 @@ data/bootstrap_static.json
 data/fixtures.json
 data/historical_3yr.json
 data/news_cache.json
+data/player_summaries.json

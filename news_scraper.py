@@ -352,8 +352,29 @@ def analyze_player_news(
             reasoning="Positive fitness/starting confirmation in team news.",
         )
 
-    # Default healthy starter
-    base_start = 0.92 if player.minutes >= 700 else 0.75
+    # Default healthy player: scale start probability by actual season minutes/starts
+    if player.minutes < 90:
+        return PlayerNewsAssessment(
+            player_name=player.web_name,
+            risk_level="BACKUP_LOW_MINS",
+            start_probability=0.05,
+            cameo_probability=0.10,
+            matched_headlines=matched_headlines,
+            matched_quotes=matched_quotes,
+            reasoning=f"Backup squad player ({player.minutes} mins played this season).",
+        )
+    if player.minutes < 360:
+        return PlayerNewsAssessment(
+            player_name=player.web_name,
+            risk_level="ROTATION_RISK",
+            start_probability=0.45,
+            cameo_probability=0.30,
+            matched_headlines=matched_headlines,
+            matched_quotes=matched_quotes,
+            reasoning=f"Rotation player ({player.minutes} mins played across {player.starts} starts).",
+        )
+
+    base_start = 0.94 if player.minutes >= 630 else 0.80
     return PlayerNewsAssessment(
         player_name=player.web_name,
         risk_level="NONE",

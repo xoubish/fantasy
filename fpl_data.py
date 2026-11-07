@@ -1,28 +1,24 @@
 """
-FPL Data Collector & Historical Database Module (fpl_data.py)
+FPL Live Data Collector & Real Premier League Roster Loader (fpl_data.py)
 
-Fetches and caches:
-1. Current season FPL data from the official API:
-   - https://fantasy.premierleague.com/api/bootstrap-static/
-   - https://fantasy.premierleague.com/api/fixtures/
-   - https://fantasy.premierleague.com/api/element-summary/{player_id}/
-2. Multi-season historical stats (past 2-3 seasons):
-   - From FPL's `history_past` endpoint per player
-   - From the open-source vaastav/Fantasy-Premier-League archive (2023-24, 2024-25, 2025-26)
-3. Stores normalized records in a local SQLite database (`data/fpl.db`) and JSON cache
-   with an automatic offline/sandbox seed dataset so the predictor works both online and offline.
+Strictly loads ONLY active players belonging to the 20 current Premier League clubs
+from the official Fantasy Premier League API (`bootstrap-static/`, `fixtures/`,
+and per-player `element-summary/{id}/` match logs).
+
+Filters out any player who has left the Premier League (`status == 'u'`,
+`removed == True`, or `can_select == False`).
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import csv
 import io
 import json
 import sqlite3
 import time
-import urllib.error
 import urllib.request
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,12 +27,13 @@ DB_PATH = DATA_DIR / "fpl.db"
 CACHE_BOOTSTRAP = DATA_DIR / "bootstrap_static.json"
 CACHE_FIXTURES = DATA_DIR / "fixtures.json"
 CACHE_HISTORICAL = DATA_DIR / "historical_3yr.json"
+CACHE_SUMMARIES = DATA_DIR / "player_summaries.json"
 
 FPL_BASE_URL = "https://fantasy.premierleague.com/api"
 VAASTAV_BASE_URL = (
     "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
 )
-HISTORICAL_SEASONS = ["2023-24", "2024-25", "2025-26"]
+HISTORICAL_SEASONS = ["2023-24", "2024-25"]
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
@@ -70,43 +67,68 @@ class PlayerRecord:
     id: int
     web_name: str
     full_name: str
+    team_id: int
     team_short: str
     team_name: str
     position: str  # GKP, DEF, MID, FWD
-    price: float  # in millions, e.g. 10.5
-    status: str  # 'a' available, 'd' doubtful, 'i' injured, 's' suspended, 'u' unavailable
+    price: float  # in millions, e.g. 8.1
+    status: str  # 'a' available, 'd' doubtful, 'i' injured, 's' suspended
     chance_of_playing_next_round: Optional[int]
     fpl_news: str
     total_points: int
     minutes: int
+    starts: int
     points_per_game: float
     form: float
+    value_form: float  # form points per £m
+    value_season: float  # total points per £m
+    selected_by_percent: float
     xg_per_90: float
     xa_per_90: float
     xgi_per_90: float
     xgc_per_90: float
+    defensive_contribution_per_90: float  # CBIT + tackles + recoveries per 90
+    ict_per_90: float
+    threat_per_90: float
+    creativity_per_90: float
+    saves_per_90: float
     clean_sheets: int
     bps_per_90: float
+    bonus: int
     in_dreamteam: bool
     penalties_order: Optional[int]
     corners_order: Optional[int]
+    direct_freekicks_order: Optional[int]
     next_opponent: str  # e.g., "HUL (H)" or "CRY (A)"
     is_home: bool
     fixture_difficulty: int  # 1 (easiest) to 5 (hardest)
-    opp_attack_strength: int  # 1000-1350 scale
-    opp_defence_strength: int  # 1000-1350 scale
+    team_attack_strength: int  # Own team attack strength in this venue
+    team_defence_strength: int  # Own team defence strength in this venue
+    opp_attack_strength: int  # Opponent attack strength in this venue
+    opp_defence_strength: int  # Opponent defence strength in this venue
     historical_seasons: List[HistoricalSeasonStat] = field(default_factory=list)
+    gw_history: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def historical_ppg_3yr(self) -> float:
-        """Weighted points-per-90 across the last 2-3 seasons."""
-        if not self.historical_seasons:
-            return self.points_per_game
-        total_mins = sum(s.minutes for s in self.historical_seasons)
-        total_pts = sum(s.total_points for s in self.historical_seasons)
-        if total_mins < 450:
+        """Weighted points-per-90 across past seasons + current season."""
+        total_mins = sum(s.minutes for s in self.historical_seasons) + self.minutes
+        total_pts = (
+            sum(s.total_points for s in self.historical_seasons) + self.total_points
+        )
+        if total_mins < 270:
             return self.points_per_game
         return round((total_pts / total_mins) * 90.0, 2)
+
+    @property
+    def attack_mismatch_advantage(self) -> float:
+        """Positive when player's team attack is stronger than opponent's defence."""
+        return (self.team_attack_strength - self.opp_defence_strength) / 100.0
+
+    @property
+    def defence_mismatch_advantage(self) -> float:
+        """Positive when player's team defence is stronger than opponent's attack."""
+        return (self.team_defence_strength - self.opp_attack_strength) / 100.0
 
 
 def _http_get_json(url: str, timeout: int = 12) -> Any:
@@ -121,57 +143,54 @@ def _http_get_text(url: str, timeout: int = 12) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def init_db(db_path: Path = DB_PATH) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS players (
-                id INTEGER PRIMARY KEY,
-                web_name TEXT,
-                full_name TEXT,
-                team_short TEXT,
-                team_name TEXT,
-                position TEXT,
-                price REAL,
-                status TEXT,
-                chance_of_playing INTEGER,
-                fpl_news TEXT,
-                total_points INTEGER,
-                minutes INTEGER,
-                points_per_game REAL,
-                form REAL,
-                xg_per_90 REAL,
-                xa_per_90 REAL,
-                xgi_per_90 REAL,
-                xgc_per_90 REAL,
-                clean_sheets INTEGER,
-                bps_per_90 REAL,
-                in_dreamteam INTEGER,
-                penalties_order INTEGER,
-                corners_order INTEGER,
-                next_opponent TEXT,
-                is_home INTEGER,
-                fixture_difficulty INTEGER,
-                opp_attack_strength INTEGER,
-                opp_defence_strength INTEGER,
-                historical_json TEXT,
-                updated_at REAL
-            )
-            """
-        )
-        conn.commit()
-
-
-def sync_live_fpl_data(fetch_player_histories: bool = False) -> Dict[str, Any]:
+def fetch_player_summaries_concurrent(player_ids: List[int]) -> Dict[str, Any]:
     """
-    Attempts to download live FPL bootstrap-static, fixtures, and 3-year historical CSVs.
-    Saves to `data/` and returns a status summary.
+    Fetches `element-summary/{id}/` (which contains `history` for every GW this season
+    and `history_past` for prior seasons) concurrently for active Premier League players.
+    """
+    existing: Dict[str, Any] = {}
+    if CACHE_SUMMARIES.exists():
+        try:
+            existing = json.loads(CACHE_SUMMARIES.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    to_fetch = [pid for pid in player_ids if str(pid) not in existing]
+    if not to_fetch:
+        return existing
+
+    def _fetch_one(pid: int) -> tuple[str, Any]:
+        data = _http_get_json(f"{FPL_BASE_URL}/element-summary/{pid}/", timeout=10)
+        return str(pid), {
+            "history": data.get("history", []),
+            "history_past": data.get("history_past", []),
+        }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        futures = {pool.submit(_fetch_one, pid): pid for pid in to_fetch}
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                k, val = fut.result()
+                existing[k] = val
+            except Exception:
+                continue
+
+    CACHE_SUMMARIES.write_text(json.dumps(existing), encoding="utf-8")
+    return existing
+
+
+def sync_live_fpl_data(fetch_player_histories: bool = True) -> Dict[str, Any]:
+    """
+    Downloads live FPL bootstrap-static, fixtures, and per-player match histories (`element-summary`).
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    status = {"live_fpl_synced": False, "historical_synced": False, "errors": []}
+    status = {
+        "live_fpl_synced": False,
+        "historical_synced": False,
+        "summaries_synced": 0,
+        "errors": [],
+    }
 
-    # 1. Fetch official FPL bootstrap-static & fixtures
     try:
         bootstrap = _http_get_json(f"{FPL_BASE_URL}/bootstrap-static/")
         CACHE_BOOTSTRAP.write_text(json.dumps(bootstrap, indent=2), encoding="utf-8")
@@ -182,2028 +201,282 @@ def sync_live_fpl_data(fetch_player_histories: bool = False) -> Dict[str, Any]:
     except Exception as exc:
         status["errors"].append(f"FPL API fetch failed: {exc}")
 
-    # 2. Fetch 3-year historical summaries from vaastav archive
-    historical_by_name: Dict[str, List[Dict[str, Any]]] = {}
-    try:
-        for season in HISTORICAL_SEASONS:
-            url = f"{VAASTAV_BASE_URL}/{season}/cleaned_players.csv"
-            csv_text = _http_get_text(url)
-            reader = csv.DictReader(io.StringIO(csv_text))
-            for row in reader:
-                full_name = f"{row.get('first_name', '')} {row.get('second_name', '')}".strip()
-                second_name = row.get("second_name", "").strip()
-                entry = {
-                    "season_name": season,
-                    "total_points": int(float(row.get("total_points", 0) or 0)),
-                    "minutes": int(float(row.get("minutes", 0) or 0)),
-                    "goals_scored": int(float(row.get("goals_scored", 0) or 0)),
-                    "assists": int(float(row.get("assists", 0) or 0)),
-                    "clean_sheets": int(float(row.get("clean_sheets", 0) or 0)),
-                    "expected_goals": float(row.get("expected_goals", 0.0) or 0.0),
-                    "expected_assists": float(row.get("expected_assists", 0.0) or 0.0),
-                    "bonus": int(float(row.get("bonus", 0) or 0)),
-                }
-                for key in {full_name.lower(), second_name.lower()}:
-                    if key:
-                        historical_by_name.setdefault(key, []).append(entry)
-        CACHE_HISTORICAL.write_text(
-            json.dumps(historical_by_name, indent=2), encoding="utf-8"
-        )
-        status["historical_synced"] = True
-    except Exception as exc:
-        status["errors"].append(f"Historical 3-year CSV fetch failed: {exc}")
-
-    # 3. Optionally fetch per-player `element-summary/{id}/` for top players
-    if status["live_fpl_synced"] and fetch_player_histories:
+    # Fetch per-player element-summary for all active players with >= 180 mins
+    if (status["live_fpl_synced"] or CACHE_BOOTSTRAP.exists()) and fetch_player_histories:
         try:
             bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
-            elements = sorted(
-                bootstrap.get("elements", []),
-                key=lambda e: float(e.get("total_points", 0)),
-                reverse=True,
-            )[:60]
-            for el in elements:
-                pid = el["id"]
-                summary = _http_get_json(f"{FPL_BASE_URL}/element-summary/{pid}/")
-                past = summary.get("history_past", [])
-                if past:
-                    key = el.get("web_name", "").lower()
-                    historical_by_name[key] = [
-                        {
-                            "season_name": p.get("season_name", ""),
-                            "total_points": int(p.get("total_points", 0)),
-                            "minutes": int(p.get("minutes", 0)),
-                            "goals_scored": int(p.get("goals_scored", 0)),
-                            "assists": int(p.get("assists", 0)),
-                            "clean_sheets": int(p.get("clean_sheets", 0)),
-                            "expected_goals": float(p.get("expected_goals", 0.0) or 0.0),
-                            "expected_assists": float(
-                                p.get("expected_assists", 0.0) or 0.0
-                            ),
-                            "bonus": int(p.get("bonus", 0)),
-                        }
-                        for p in past[-3:]
-                    ]
-                time.sleep(0.05)
-            CACHE_HISTORICAL.write_text(
-                json.dumps(historical_by_name, indent=2), encoding="utf-8"
-            )
+            active_ids = [
+                int(el["id"])
+                for el in bootstrap.get("elements", [])
+                if el.get("status") != "u"
+                and not el.get("removed")
+                and int(el.get("minutes", 0) or 0) >= 180
+            ]
+            summaries = fetch_player_summaries_concurrent(active_ids)
+            status["summaries_synced"] = len(summaries)
+            status["historical_synced"] = True
         except Exception as exc:
-            status["errors"].append(f"Element summary fetch warning: {exc}")
+            status["errors"].append(f"Element summaries fetch warning: {exc}")
 
     return status
 
 
-def _parse_cached_fpl_api() -> Optional[List[PlayerRecord]]:
-    """Parses cached `bootstrap_static.json` and `fixtures.json` into PlayerRecord objects."""
-    if not CACHE_BOOTSTRAP.exists() or not CACHE_FIXTURES.exists():
-        return None
+def compute_team_strengths(
+    bootstrap: Dict[str, Any], fixtures: List[Dict[str, Any]]
+) -> Dict[int, Dict[str, int]]:
+    """
+    Computes real Attack and Defence strength ratings (on the 950-1350 scale) for all 20
+    Premier League teams using:
+      1. Actual goals scored per game (GF/g) and goals conceded per game (GA/g) from finished matches
+      2. Official `strength_overall_home` / `strength_overall_away` (2 to 5)
+      3. Current Premier League table `position` (1 to 20)
+    """
+    teams = {int(t["id"]): t for t in bootstrap.get("teams", [])}
+    gf = {tid: 0 for tid in teams}
+    ga = {tid: 0 for tid in teams}
+    gp = {tid: 0 for tid in teams}
 
-    try:
-        bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
-        fixtures = json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
-        historical_map: Dict[str, List[Dict[str, Any]]] = {}
-        if CACHE_HISTORICAL.exists():
-            historical_map = json.loads(CACHE_HISTORICAL.read_text(encoding="utf-8"))
+    for fix in fixtures:
+        if fix.get("finished") and fix.get("team_h_score") is not None:
+            th, ta = int(fix["team_h"]), int(fix["team_a"])
+            sh, sa = int(fix["team_h_score"]), int(fix["team_a_score"])
+            if th in gf:
+                gf[th] += sh
+                ga[th] += sa
+                gp[th] += 1
+            if ta in gf:
+                gf[ta] += sa
+                ga[ta] += sh
+                gp[ta] += 1
 
-        teams_by_id: Dict[int, Dict[str, Any]] = {
-            t["id"]: t for t in bootstrap.get("teams", [])
+    ratings: Dict[int, Dict[str, int]] = {}
+    for tid, t in teams.items():
+        n = max(1, gp[tid])
+        gf_pg = gf[tid] / n  # range ~0.65 to 2.70
+        ga_pg = ga[tid] / n  # range ~0.55 to 2.35
+        pos_rank = int(t.get("position", 10) or 10)
+        str_h = int(t.get("strength_overall_home", 3) or 3)
+        str_a = int(t.get("strength_overall_away", 3) or 3)
+
+        # Higher attack rating = team scores more goals & has higher overall strength
+        att_base = 1000 + int((gf_pg - 0.65) * 140) + (20 - pos_rank) * 4
+        # Higher defence rating = team concedes FEWER goals & has higher overall strength
+        def_base = 1000 + int((2.35 - ga_pg) * 150) + (20 - pos_rank) * 4
+
+        ratings[tid] = {
+            "att_home": max(960, min(1360, att_base + str_h * 18)),
+            "def_home": max(960, min(1360, def_base + str_h * 18)),
+            "att_away": max(950, min(1350, att_base + str_a * 12 - 20)),
+            "def_away": max(950, min(1350, def_base + str_a * 12 - 20)),
         }
+    return ratings
 
-        # Find next gameweek
-        events = bootstrap.get("events", [])
-        next_event = next(
-            (e for e in events if e.get("is_next")),
-            next((e for e in events if e.get("is_current")), None),
+
+def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
+    """
+    Loads ONLY active players from the 20 current Premier League teams in `bootstrap_static.json`.
+    Automatically picks the active/upcoming unfinished Gameweek (e.g. GW 10) unless `target_gw` is specified.
+    """
+    if not CACHE_BOOTSTRAP.exists() or not CACHE_FIXTURES.exists():
+        raise RuntimeError(
+            "Live FPL cache (`data/bootstrap_static.json`) not found. Run `python3 fpl_assistant.py sync` first."
         )
-        next_gw_id = next_event["id"] if next_event else 1
 
-        # Map team_id -> next fixture info
-        next_fix_by_team: Dict[int, Dict[str, Any]] = {}
-        for fix in fixtures:
-            if fix.get("event") == next_gw_id:
-                th = fix["team_h"]
-                ta = fix["team_a"]
-                th_obj = teams_by_id.get(th, {})
-                ta_obj = teams_by_id.get(ta, {})
-                next_fix_by_team[th] = {
-                    "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
-                    "is_home": True,
-                    "difficulty": int(fix.get("team_h_difficulty", 3)),
-                    "opp_att": int(ta_obj.get("strength_attack_away", 1150)),
-                    "opp_def": int(ta_obj.get("strength_defence_away", 1150)),
-                }
-                next_fix_by_team[ta] = {
-                    "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
-                    "is_home": False,
-                    "difficulty": int(fix.get("team_a_difficulty", 3)),
-                    "opp_att": int(th_obj.get("strength_attack_home", 1150)),
-                    "opp_def": int(th_obj.get("strength_defence_home", 1150)),
-                }
+    bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
+    fixtures = json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
 
-        records: List[PlayerRecord] = []
-        for el in bootstrap.get("elements", []):
-            tid = el["team"]
-            team_obj = teams_by_id.get(tid, {})
-            fix_info = next_fix_by_team.get(
-                tid,
-                {
-                    "opponent": "TBD",
-                    "is_home": True,
-                    "difficulty": 3,
-                    "opp_att": 1150,
-                    "opp_def": 1150,
-                },
+    summaries_map: Dict[str, Any] = {}
+    if CACHE_SUMMARIES.exists():
+        try:
+            summaries_map = json.loads(CACHE_SUMMARIES.read_text(encoding="utf-8"))
+        except Exception:
+            summaries_map = {}
+
+    historical_map: Dict[str, List[Dict[str, Any]]] = {}
+    if CACHE_HISTORICAL.exists():
+        try:
+            historical_map = json.loads(CACHE_HISTORICAL.read_text(encoding="utf-8"))
+        except Exception:
+            historical_map = {}
+
+    # Strictly index the 20 current Premier League teams
+    teams_by_id: Dict[int, Dict[str, Any]] = {
+        int(t["id"]): t
+        for t in bootstrap.get("teams", [])
+        if not t.get("unavailable", False)
+    }
+    team_ratings = compute_team_strengths(bootstrap, fixtures)
+
+    # Determine target Gameweek: pick the earliest GW that still has unfinished matches (GW 10)
+    if target_gw is None:
+        events = bootstrap.get("events", [])
+        current_ev = next((e for e in events if e.get("is_current")), None)
+        next_ev = next((e for e in events if e.get("is_next")), None)
+        if current_ev:
+            gw_id = int(current_ev["id"])
+            gw_fixes = [f for f in fixtures if f.get("event") == gw_id]
+            # If the majority of matches in current_ev are still unfinished, use current_ev (GW 10)
+            unfinished = sum(1 for f in gw_fixes if not f.get("finished"))
+            target_gw = gw_id if unfinished >= 5 else (int(next_ev["id"]) if next_ev else gw_id)
+        elif next_ev:
+            target_gw = int(next_ev["id"])
+        else:
+            target_gw = 10
+
+    # Map team_id -> fixture info for target_gw
+    next_fix_by_team: Dict[int, Dict[str, Any]] = {}
+    for fix in fixtures:
+        if fix.get("event") == target_gw:
+            th = int(fix["team_h"])
+            ta = int(fix["team_a"])
+            th_obj = teams_by_id.get(th, {})
+            ta_obj = teams_by_id.get(ta, {})
+            r_h = team_ratings.get(th, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130})
+            r_a = team_ratings.get(ta, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130})
+            next_fix_by_team[th] = {
+                "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
+                "is_home": True,
+                "difficulty": int(fix.get("team_h_difficulty", 3)),
+                "team_att": r_h["att_home"],
+                "team_def": r_h["def_home"],
+                "opp_att": r_a["att_away"],
+                "opp_def": r_a["def_away"],
+            }
+            next_fix_by_team[ta] = {
+                "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
+                "is_home": False,
+                "difficulty": int(fix.get("team_a_difficulty", 3)),
+                "team_att": r_a["att_away"],
+                "team_def": r_a["def_away"],
+                "opp_att": r_h["att_home"],
+                "opp_def": r_h["def_home"],
+            }
+
+    records: List[PlayerRecord] = []
+    for el in bootstrap.get("elements", []):
+        # Strictly exclude players who have left the Premier League or cannot be selected
+        if (
+            el.get("status") == "u"
+            or el.get("removed", False)
+            or not el.get("can_select", True)
+        ):
+            continue
+
+        tid = int(el["team"])
+        if tid not in teams_by_id:
+            continue
+
+        team_obj = teams_by_id[tid]
+        fix_info = next_fix_by_team.get(
+            tid,
+            {
+                "opponent": "TBD",
+                "is_home": True,
+                "difficulty": 3,
+                "team_att": 1150,
+                "team_def": 1150,
+                "opp_att": 1150,
+                "opp_def": 1150,
+            },
+        )
+
+        pid = int(el["id"])
+        mins = int(el.get("minutes", 0) or 0)
+        nineties = max(mins / 90.0, 1.0)
+        web_name = el.get("web_name", "")
+        full_name = f"{el.get('first_name', '')} {el.get('second_name', '')}".strip()
+
+        # Past seasons from element-summary or historical_map
+        sum_entry = summaries_map.get(str(pid), {})
+        past_list = sum_entry.get("history_past") or (
+            historical_map.get(web_name.lower())
+            or historical_map.get(full_name.lower())
+            or []
+        )
+        hist_objs = [
+            HistoricalSeasonStat(
+                season_name=str(p.get("season_name", "")),
+                total_points=int(p.get("total_points", 0) or 0),
+                minutes=int(p.get("minutes", 0) or 0),
+                goals_scored=int(p.get("goals_scored", 0) or 0),
+                assists=int(p.get("assists", 0) or 0),
+                clean_sheets=int(p.get("clean_sheets", 0) or 0),
+                expected_goals=float(p.get("expected_goals", 0.0) or 0.0),
+                expected_assists=float(p.get("expected_assists", 0.0) or 0.0),
+                bonus=int(p.get("bonus", 0) or 0),
             )
-            mins = int(el.get("minutes", 0) or 0)
-            nineties = max(mins / 90.0, 1.0)
-            web_name = el.get("web_name", "")
-            full_name = f"{el.get('first_name', '')} {el.get('second_name', '')}".strip()
+            for p in past_list[-3:]
+        ]
 
-            hist_raw = (
-                historical_map.get(web_name.lower())
-                or historical_map.get(full_name.lower())
-                or []
-            )
-            hist_objs = [HistoricalSeasonStat(**h) for h in hist_raw[-3:]]
+        gw_hist = sum_entry.get("history", [])
 
-            records.append(
-                PlayerRecord(
-                    id=int(el["id"]),
-                    web_name=web_name,
-                    full_name=full_name,
-                    team_short=team_obj.get("short_name", "UNK"),
-                    team_name=team_obj.get("name", "Unknown"),
-                    position=POSITION_MAP.get(int(el.get("element_type", 3)), "MID"),
-                    price=round(float(el.get("now_cost", 50)) / 10.0, 1),
-                    status=el.get("status", "a"),
-                    chance_of_playing_next_round=el.get("chance_of_playing_next_round"),
-                    fpl_news=el.get("news", "") or "",
-                    total_points=int(el.get("total_points", 0)),
-                    minutes=mins,
-                    points_per_game=float(el.get("points_per_game", 0.0) or 0.0),
-                    form=float(el.get("form", 0.0) or 0.0),
-                    xg_per_90=round(
-                        float(el.get("expected_goals", 0.0) or 0.0) / nineties, 2
-                    ),
-                    xa_per_90=round(
-                        float(el.get("expected_assists", 0.0) or 0.0) / nineties, 2
-                    ),
-                    xgi_per_90=round(
-                        float(el.get("expected_goal_involvements", 0.0) or 0.0)
-                        / nineties,
-                        2,
-                    ),
-                    xgc_per_90=round(
-                        float(el.get("expected_goals_conceded", 0.0) or 0.0) / nineties,
-                        2,
-                    ),
-                    clean_sheets=int(el.get("clean_sheets", 0)),
-                    bps_per_90=round(float(el.get("bps", 0) or 0) / nineties, 1),
-                    in_dreamteam=bool(el.get("in_dreamteam", False)),
-                    penalties_order=el.get("penalties_order"),
-                    corners_order=el.get("corners_order"),
-                    next_opponent=fix_info["opponent"],
-                    is_home=fix_info["is_home"],
-                    fixture_difficulty=fix_info["difficulty"],
-                    opp_attack_strength=fix_info["opp_att"],
-                    opp_defence_strength=fix_info["opp_def"],
-                    historical_seasons=hist_objs,
-                )
-            )
-        return records
-    except Exception:
-        return None
-
-
-def get_seed_dataset_2026_27() -> List[PlayerRecord]:
-    """
-    Built-in 2026/27 Premier League dataset including:
-    - All 15 players in the user's squad
-    - Top Premier League options across all positions for transfers / Free Hit / Wildcard
-    - Multi-season historical baselines (2023-24, 2024-25, 2025-26)
-    """
-    seed_players = [
-        # --- USER'S 15 SQUAD PLAYERS ---
-        PlayerRecord(
-            id=101,
-            web_name="Verbruggen",
-            full_name="Bart Verbruggen",
-            team_short="BHA",
-            team_name="Brighton",
-            position="GKP",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=42,
-            minutes=900,
-            points_per_game=4.2,
-            form=4.5,
-            xg_per_90=0.0,
-            xa_per_90=0.02,
-            xgi_per_90=0.02,
-            xgc_per_90=1.18,
-            clean_sheets=3,
-            bps_per_90=18.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BRE (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1140,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 66, 1890, 0, 0, 4, 0.0, 0.1, 5),
-                HistoricalSeasonStat("2024-25", 118, 3150, 0, 1, 9, 0.0, 0.3, 12),
-                HistoricalSeasonStat("2025-26", 132, 3420, 0, 1, 11, 0.0, 0.4, 15),
-            ],
-        ),
-        PlayerRecord(
-            id=102,
-            web_name="Virgil",
-            full_name="Virgil van Dijk",
-            team_short="LIV",
-            team_name="Liverpool",
-            position="DEF",
-            price=6.2,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=54,
-            minutes=900,
-            points_per_game=5.4,
-            form=5.8,
-            xg_per_90=0.11,
-            xa_per_90=0.04,
-            xgi_per_90=0.15,
-            xgc_per_90=0.88,
-            clean_sheets=5,
-            bps_per_90=22.4,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="CRY (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1110,
-            opp_defence_strength=1150,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 117, 3177, 2, 2, 9, 2.9, 1.1, 14),
-                HistoricalSeasonStat("2024-25", 162, 3330, 4, 2, 14, 3.5, 1.2, 21),
-                HistoricalSeasonStat("2025-26", 158, 3240, 3, 2, 14, 3.2, 1.0, 19),
-            ],
-        ),
-        PlayerRecord(
-            id=103,
-            web_name="Dunk",
-            full_name="Lewis Dunk",
-            team_short="BHA",
-            team_name="Brighton",
-            position="DEF",
-            price=4.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=39,
-            minutes=900,
-            points_per_game=3.9,
-            form=4.2,
-            xg_per_90=0.08,
-            xa_per_90=0.03,
-            xgi_per_90=0.11,
-            xgc_per_90=1.18,
-            clean_sheets=3,
-            bps_per_90=17.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BRE (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1140,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 89, 2885, 3, 1, 5, 2.7, 0.9, 8),
-                HistoricalSeasonStat("2024-25", 112, 3060, 2, 2, 8, 2.4, 1.1, 11),
-                HistoricalSeasonStat("2025-26", 124, 3240, 3, 1, 10, 2.8, 0.8, 14),
-            ],
-        ),
-        PlayerRecord(
-            id=104,
-            web_name="Gabriel",
-            full_name="Gabriel Magalhães",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="DEF",
-            price=6.4,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=68,
-            minutes=900,
-            points_per_game=6.8,
-            form=7.4,
-            xg_per_90=0.19,
-            xa_per_90=0.04,
-            xgi_per_90=0.23,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=25.1,
-            in_dreamteam=True,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 149, 3044, 4, 0, 16, 4.3, 0.6, 15),
-                HistoricalSeasonStat("2024-25", 168, 3240, 5, 1, 16, 4.9, 0.8, 20),
-                HistoricalSeasonStat("2025-26", 174, 3330, 5, 2, 17, 5.1, 1.1, 22),
-            ],
-        ),
-        PlayerRecord(
-            id=105,
-            web_name="Justin",
-            full_name="James Justin",
-            team_short="LEE",
-            team_name="Leeds United",
-            position="DEF",
-            price=4.4,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=29,
-            minutes=900,
-            points_per_game=2.9,
-            form=2.8,
-            xg_per_90=0.05,
-            xa_per_90=0.08,
-            xgi_per_90=0.13,
-            xgc_per_90=1.68,
-            clean_sheets=1,
-            bps_per_90=13.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="TOT (H)",
-            is_home=True,
-            fixture_difficulty=4,
-            opp_attack_strength=1265,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 82, 2880, 2, 2, 3, 1.5, 2.2, 6),
-                HistoricalSeasonStat("2025-26", 94, 3060, 2, 3, 5, 1.8, 2.6, 8),
-            ],
-        ),
-        PlayerRecord(
-            id=106,
-            web_name="Rice",
-            full_name="Declan Rice",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="MID",
-            price=6.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=48,
-            minutes=900,
-            points_per_game=4.8,
-            form=5.1,
-            xg_per_90=0.12,
-            xa_per_90=0.24,
-            xgi_per_90=0.36,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=21.0,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=1,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 165, 3225, 7, 9, 16, 3.4, 5.2, 22),
-                HistoricalSeasonStat("2024-25", 152, 3150, 5, 10, 15, 3.1, 6.4, 18),
-                HistoricalSeasonStat("2025-26", 158, 3240, 6, 9, 16, 3.5, 6.1, 20),
-            ],
-        ),
-        PlayerRecord(
-            id=107,
-            web_name="Ødegaard",
-            full_name="Martin Ødegaard",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="MID",
-            price=8.4,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=58,
-            minutes=880,
-            points_per_game=5.8,
-            form=6.4,
-            xg_per_90=0.25,
-            xa_per_90=0.38,
-            xgi_per_90=0.63,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=25.8,
-            in_dreamteam=False,
-            penalties_order=2,
-            corners_order=2,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 186, 3091, 8, 11, 16, 7.4, 9.6, 29),
-                HistoricalSeasonStat("2024-25", 172, 2790, 8, 10, 14, 6.8, 8.9, 25),
-                HistoricalSeasonStat("2025-26", 191, 3150, 10, 12, 16, 7.9, 10.2, 31),
-            ],
-        ),
-        PlayerRecord(
-            id=108,
-            web_name="Palmer",
-            full_name="Cole Palmer",
-            team_short="CHE",
-            team_name="Chelsea",
-            position="MID",
-            price=11.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=76,
-            minutes=890,
-            points_per_game=7.6,
-            form=8.2,
-            xg_per_90=0.52,
-            xa_per_90=0.39,
-            xgi_per_90=0.91,
-            xgc_per_90=1.05,
-            clean_sheets=4,
-            bps_per_90=28.5,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="SUN (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 244, 2607, 22, 11, 7, 18.2, 8.7, 32),
-                HistoricalSeasonStat("2024-25", 232, 3150, 20, 13, 10, 17.5, 10.4, 30),
-                HistoricalSeasonStat("2025-26", 248, 3240, 22, 14, 11, 18.8, 11.1, 35),
-            ],
-        ),
-        PlayerRecord(
-            id=109,
-            web_name="Groß",
-            full_name="Pascal Groß",
-            team_short="BHA",
-            team_name="Brighton",
-            position="MID",
-            price=6.8,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=66,
-            minutes=890,
-            points_per_game=6.6,
-            form=7.0,
-            xg_per_90=0.18,
-            xa_per_90=0.44,
-            xgi_per_90=0.62,
-            xgc_per_90=1.18,
-            clean_sheets=3,
-            bps_per_90=27.2,
-            in_dreamteam=True,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="BRE (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1140,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 153, 3112, 4, 11, 6, 5.4, 8.5, 26),
-                HistoricalSeasonStat("2024-25", 142, 2700, 4, 10, 7, 4.2, 7.8, 22),
-                HistoricalSeasonStat("2025-26", 160, 2970, 5, 12, 8, 4.9, 8.9, 25),
-            ],
-        ),
-        PlayerRecord(
-            id=110,
-            web_name="Thiago",
-            full_name="Igor Thiago",
-            team_short="BRE",
-            team_name="Brentford",
-            position="FWD",
-            price=6.2,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=46,
-            minutes=860,
-            points_per_game=4.6,
-            form=4.8,
-            xg_per_90=0.44,
-            xa_per_90=0.11,
-            xgi_per_90=0.55,
-            xgc_per_90=1.35,
-            clean_sheets=2,
-            bps_per_90=16.8,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="BHA (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 95, 2100, 9, 3, 5, 8.8, 2.4, 11),
-                HistoricalSeasonStat("2025-26", 138, 2880, 14, 4, 7, 13.5, 3.2, 16),
-            ],
-        ),
-        PlayerRecord(
-            id=111,
-            web_name="Isak",
-            full_name="Alexander Isak",
-            team_short="LIV",
-            team_name="Liverpool",
-            position="FWD",
-            price=9.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=74,
-            minutes=870,
-            points_per_game=7.4,
-            form=7.9,
-            xg_per_90=0.66,
-            xa_per_90=0.18,
-            xgi_per_90=0.84,
-            xgc_per_90=0.88,
-            clean_sheets=5,
-            bps_per_90=26.9,
-            in_dreamteam=True,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="CRY (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1110,
-            opp_defence_strength=1150,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 172, 2253, 21, 4, 6, 19.8, 3.6, 25),
-                HistoricalSeasonStat("2024-25", 198, 2790, 23, 6, 9, 21.4, 4.8, 28),
-                HistoricalSeasonStat("2025-26", 215, 2970, 25, 7, 12, 22.9, 5.5, 32),
-            ],
-        ),
-        PlayerRecord(
-            id=112,
-            web_name="Wilson",
-            full_name="Ben Wilson",
-            team_short="SUN",
-            team_name="Sunderland",
-            position="GKP",
-            price=4.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=22,
-            minutes=900,
-            points_per_game=2.2,
-            form=2.0,
-            xg_per_90=0.0,
-            xa_per_90=0.0,
-            xgi_per_90=0.0,
-            xgc_per_90=1.75,
-            clean_sheets=1,
-            bps_per_90=12.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="EVE (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1130,
-            opp_defence_strength=1160,
-            historical_seasons=[
-                HistoricalSeasonStat("2025-26", 92, 2880, 0, 0, 6, 0.0, 0.0, 7),
-            ],
-        ),
-        PlayerRecord(
-            id=113,
-            web_name="M.Sangaré",
-            full_name="Massadio Sangaré",
-            team_short="BRE",
-            team_name="Brentford",
-            position="MID",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=25,
-            minutes=850,
-            points_per_game=2.5,
-            form=2.4,
-            xg_per_90=0.04,
-            xa_per_90=0.06,
-            xgi_per_90=0.10,
-            xgc_per_90=1.35,
-            clean_sheets=2,
-            bps_per_90=11.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BHA (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2025-26", 78, 2610, 1, 2, 6, 1.2, 1.8, 4),
-            ],
-        ),
-        PlayerRecord(
-            id=114,
-            web_name="O'Reilly",
-            full_name="Nico O'Reilly",
-            team_short="MCI",
-            team_name="Man City",
-            position="DEF",
-            price=4.8,
-            status="d",
-            chance_of_playing_next_round=50,
-            fpl_news="Manager Enzo Maresca states O'Reilly is not 100% fit and needs rest before the international break.",
-            total_points=36,
-            minutes=610,
-            points_per_game=3.6,
-            form=3.5,
-            xg_per_90=0.09,
-            xa_per_90=0.14,
-            xgi_per_90=0.23,
-            xgc_per_90=0.92,
-            clean_sheets=3,
-            bps_per_90=18.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="NFO (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1090,
-            opp_defence_strength=1120,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 45, 920, 1, 2, 4, 0.9, 1.4, 4),
-                HistoricalSeasonStat("2025-26", 142, 2790, 4, 6, 12, 3.2, 4.8, 16),
-            ],
-        ),
-        PlayerRecord(
-            id=115,
-            web_name="João Pedro",
-            full_name="João Pedro Junqueira",
-            team_short="CHE",
-            team_name="Chelsea",
-            position="FWD",
-            price=6.0,
-            status="i",
-            chance_of_playing_next_round=0,
-            fpl_news="Injured - expected back after the international break",
-            total_points=32,
-            minutes=540,
-            points_per_game=4.5,
-            form=0.0,
-            xg_per_90=0.42,
-            xa_per_90=0.16,
-            xgi_per_90=0.58,
-            xgc_per_90=1.05,
-            clean_sheets=2,
-            bps_per_90=16.5,
-            in_dreamteam=False,
-            penalties_order=2,
-            corners_order=None,
-            next_opponent="SUN (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 104, 2039, 9, 3, 4, 10.2, 3.1, 13),
-                HistoricalSeasonStat("2024-25", 136, 2430, 12, 5, 6, 11.8, 4.2, 17),
-                HistoricalSeasonStat("2025-26", 144, 2520, 13, 6, 8, 12.4, 4.9, 18),
-            ],
-        ),
-        # --- TOP LEAGUE-WIDE TARGETS FOR FREE HIT / WILDCARD / TRANSFERS ---
-        PlayerRecord(
-            id=201,
-            web_name="Saka",
-            full_name="Bukayo Saka",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="MID",
-            price=10.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=81,
-            minutes=890,
-            points_per_game=8.1,
-            form=8.6,
-            xg_per_90=0.54,
-            xa_per_90=0.45,
-            xgi_per_90=0.99,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=29.4,
-            in_dreamteam=True,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 226, 2922, 16, 12, 16, 15.5, 10.9, 29),
-                HistoricalSeasonStat("2024-25", 238, 3060, 18, 14, 15, 16.4, 12.1, 32),
-                HistoricalSeasonStat("2025-26", 245, 3150, 19, 15, 16, 17.1, 12.8, 34),
-            ],
-        ),
-        PlayerRecord(
-            id=202,
-            web_name="Haaland",
-            full_name="Erling Haaland",
-            team_short="MCI",
-            team_name="Man City",
-            position="FWD",
-            price=14.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=84,
-            minutes=890,
-            points_per_game=8.4,
-            form=8.5,
-            xg_per_90=0.88,
-            xa_per_90=0.12,
-            xgi_per_90=1.00,
-            xgc_per_90=0.92,
-            clean_sheets=4,
-            bps_per_90=31.0,
-            in_dreamteam=True,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="NFO (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1090,
-            opp_defence_strength=1120,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 217, 2553, 27, 8, 11, 29.2, 4.3, 32),
-                HistoricalSeasonStat("2024-25", 242, 2880, 29, 6, 12, 28.5, 3.8, 36),
-                HistoricalSeasonStat("2025-26", 236, 2820, 28, 7, 12, 27.4, 4.1, 35),
-            ],
-        ),
-        PlayerRecord(
-            id=203,
-            web_name="Gvardiol",
-            full_name="Joško Gvardiol",
-            team_short="MCI",
-            team_name="Man City",
-            position="DEF",
-            price=6.1,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=56,
-            minutes=880,
-            points_per_game=5.6,
-            form=6.0,
-            xg_per_90=0.16,
-            xa_per_90=0.12,
-            xgi_per_90=0.28,
-            xgc_per_90=0.92,
-            clean_sheets=4,
-            bps_per_90=22.8,
-            in_dreamteam=True,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="NFO (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1090,
-            opp_defence_strength=1120,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 123, 2328, 4, 2, 10, 3.1, 2.2, 15),
-                HistoricalSeasonStat("2024-25", 158, 3060, 5, 4, 13, 4.2, 3.1, 19),
-                HistoricalSeasonStat("2025-26", 164, 3150, 5, 5, 14, 4.5, 3.6, 21),
-            ],
-        ),
-        PlayerRecord(
-            id=204,
-            web_name="Colwill",
-            full_name="Levi Colwill",
-            team_short="CHE",
-            team_name="Chelsea",
-            position="DEF",
-            price=4.9,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=47,
-            minutes=900,
-            points_per_game=4.7,
-            form=5.0,
-            xg_per_90=0.08,
-            xa_per_90=0.05,
-            xgi_per_90=0.13,
-            xgc_per_90=1.05,
-            clean_sheets=4,
-            bps_per_90=19.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SUN (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 118, 2970, 2, 2, 10, 2.1, 1.5, 12),
-                HistoricalSeasonStat("2025-26", 132, 3150, 3, 2, 11, 2.5, 1.8, 15),
-            ],
-        ),
-        PlayerRecord(
-            id=205,
-            web_name="Solanke",
-            full_name="Dominic Solanke",
-            team_short="TOT",
-            team_name="Tottenham",
-            position="FWD",
-            price=7.8,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=58,
-            minutes=870,
-            points_per_game=5.8,
-            form=6.2,
-            xg_per_90=0.55,
-            xa_per_90=0.14,
-            xgi_per_90=0.69,
-            xgc_per_90=1.22,
-            clean_sheets=3,
-            bps_per_90=21.4,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="LEE (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1070,
-            opp_defence_strength=1050,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 175, 3325, 19, 3, 9, 19.6, 2.9, 22),
-                HistoricalSeasonStat("2024-25", 164, 2970, 17, 5, 8, 17.8, 3.8, 20),
-                HistoricalSeasonStat("2025-26", 172, 3060, 18, 6, 9, 18.2, 4.1, 22),
-            ],
-        ),
-        PlayerRecord(
-            id=206,
-            web_name="Sánchez",
-            full_name="Robert Sánchez",
-            team_short="CHE",
-            team_name="Chelsea",
-            position="GKP",
-            price=4.7,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=45,
-            minutes=900,
-            points_per_game=4.5,
-            form=4.8,
-            xg_per_90=0.0,
-            xa_per_90=0.01,
-            xgi_per_90=0.01,
-            xgc_per_90=1.05,
-            clean_sheets=4,
-            bps_per_90=19.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SUN (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 122, 2970, 0, 0, 10, 0.0, 0.2, 13),
-                HistoricalSeasonStat("2025-26", 134, 3240, 0, 1, 11, 0.0, 0.3, 15),
-            ],
-        ),
-        PlayerRecord(
-            id=207,
-            web_name="Pickford",
-            full_name="Jordan Pickford",
-            team_short="EVE",
-            team_name="Everton",
-            position="GKP",
-            price=5.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=49,
-            minutes=900,
-            points_per_game=4.9,
-            form=5.2,
-            xg_per_90=0.0,
-            xa_per_90=0.03,
-            xgi_per_90=0.03,
-            xgc_per_90=0.95,
-            clean_sheets=4,
-            bps_per_90=20.4,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SUN (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 153, 3420, 0, 1, 13, 0.0, 0.4, 22),
-                HistoricalSeasonStat("2024-25", 148, 3420, 0, 1, 12, 0.0, 0.3, 19),
-                HistoricalSeasonStat("2025-26", 155, 3420, 0, 2, 13, 0.0, 0.5, 21),
-            ],
-        ),
-        PlayerRecord(
-            id=208,
-            web_name="Konaté",
-            full_name="Ibrahima Konaté",
-            team_short="LIV",
-            team_name="Liverpool",
-            position="DEF",
-            price=5.3,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=50,
-            minutes=880,
-            points_per_game=5.0,
-            form=5.4,
-            xg_per_90=0.09,
-            xa_per_90=0.03,
-            xgi_per_90=0.12,
-            xgc_per_90=0.88,
-            clean_sheets=5,
-            bps_per_90=20.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="CRY (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1110,
-            opp_defence_strength=1150,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 138, 2880, 2, 1, 13, 2.2, 0.8, 14),
-                HistoricalSeasonStat("2025-26", 145, 3060, 3, 1, 14, 2.5, 0.9, 16),
-            ],
-        ),
-        PlayerRecord(
-            id=209,
-            web_name="Pedro Porro",
-            full_name="Pedro Porro",
-            team_short="TOT",
-            team_name="Tottenham",
-            position="DEF",
-            price=5.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=49,
-            minutes=900,
-            points_per_game=4.9,
-            form=5.5,
-            xg_per_90=0.12,
-            xa_per_90=0.25,
-            xgi_per_90=0.37,
-            xgc_per_90=1.22,
-            clean_sheets=3,
-            bps_per_90=21.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=1,
-            next_opponent="LEE (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1070,
-            opp_defence_strength=1050,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 136, 3092, 3, 8, 7, 3.4, 7.2, 18),
-                HistoricalSeasonStat("2024-25", 144, 3150, 4, 8, 8, 3.8, 7.5, 20),
-                HistoricalSeasonStat("2025-26", 149, 3240, 4, 9, 9, 4.0, 8.1, 21),
-            ],
-        ),
-        PlayerRecord(
-            id=210,
-            web_name="Mykolenko",
-            full_name="Vitalii Mykolenko",
-            team_short="EVE",
-            team_name="Everton",
-            position="DEF",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=41,
-            minutes=900,
-            points_per_game=4.1,
-            form=4.6,
-            xg_per_90=0.06,
-            xa_per_90=0.08,
-            xgi_per_90=0.14,
-            xgc_per_90=0.95,
-            clean_sheets=4,
-            bps_per_90=17.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SUN (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 107, 2505, 2, 0, 9, 1.9, 1.4, 11),
-                HistoricalSeasonStat("2024-25", 118, 2970, 1, 3, 11, 1.5, 2.4, 12),
-                HistoricalSeasonStat("2025-26", 125, 3150, 2, 3, 12, 1.8, 2.8, 14),
-            ],
-        ),
-        PlayerRecord(
-            id=211,
-            web_name="Rogers",
-            full_name="Morgan Rogers",
-            team_short="AVL",
-            team_name="Aston Villa",
-            position="MID",
-            price=5.8,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=52,
-            minutes=870,
-            points_per_game=5.2,
-            form=5.6,
-            xg_per_90=0.28,
-            xa_per_90=0.24,
-            xgi_per_90=0.52,
-            xgc_per_90=1.15,
-            clean_sheets=3,
-            bps_per_90=19.4,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BOU (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1110,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 145, 2970, 8, 9, 8, 7.5, 6.8, 16),
-                HistoricalSeasonStat("2025-26", 162, 3150, 10, 10, 9, 8.9, 7.6, 20),
-            ],
-        ),
-        PlayerRecord(
-            id=212,
-            web_name="Semenyo",
-            full_name="Antoine Semenyo",
-            team_short="BOU",
-            team_name="Bournemouth",
-            position="MID",
-            price=5.7,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=51,
-            minutes=890,
-            points_per_game=5.1,
-            form=5.4,
-            xg_per_90=0.35,
-            xa_per_90=0.18,
-            xgi_per_90=0.53,
-            xgc_per_90=1.28,
-            clean_sheets=2,
-            bps_per_90=18.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="AVL (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1160,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 107, 2103, 8, 3, 5, 6.5, 2.4, 10),
-                HistoricalSeasonStat("2024-25", 148, 3060, 11, 6, 7, 10.4, 4.9, 17),
-                HistoricalSeasonStat("2025-26", 156, 3150, 12, 7, 8, 11.2, 5.4, 19),
-            ],
-        ),
-        PlayerRecord(
-            id=213,
-            web_name="Mbeumo",
-            full_name="Bryan Mbeumo",
-            team_short="BRE",
-            team_name="Brentford",
-            position="MID",
-            price=7.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=62,
-            minutes=900,
-            points_per_game=6.2,
-            form=6.5,
-            xg_per_90=0.42,
-            xa_per_90=0.26,
-            xgi_per_90=0.68,
-            xgc_per_90=1.35,
-            clean_sheets=2,
-            bps_per_90=23.5,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="BHA (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 127, 1960, 9, 7, 4, 9.7, 4.5, 16),
-                HistoricalSeasonStat("2024-25", 192, 3330, 16, 8, 7, 14.8, 7.1, 26),
-                HistoricalSeasonStat("2025-26", 188, 3240, 15, 9, 8, 14.2, 7.8, 25),
-            ],
-        ),
-        PlayerRecord(
-            id=214,
-            web_name="Ndiaye",
-            full_name="Iliman Ndiaye",
-            team_short="EVE",
-            team_name="Everton",
-            position="FWD",
-            price=5.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=48,
-            minutes=860,
-            points_per_game=4.8,
-            form=5.5,
-            xg_per_90=0.38,
-            xa_per_90=0.16,
-            xgi_per_90=0.54,
-            xgc_per_90=0.95,
-            clean_sheets=4,
-            bps_per_90=19.0,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="SUN (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 132, 2790, 11, 4, 10, 9.8, 3.5, 16),
-                HistoricalSeasonStat("2025-26", 145, 2970, 12, 5, 11, 10.9, 4.2, 18),
-            ],
-        ),
-        PlayerRecord(
-            id=215,
-            web_name="Delap",
-            full_name="Liam Delap",
-            team_short="CHE",
-            team_name="Chelsea",
-            position="FWD",
-            price=6.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=51,
-            minutes=820,
-            points_per_game=5.1,
-            form=5.8,
-            xg_per_90=0.49,
-            xa_per_90=0.12,
-            xgi_per_90=0.61,
-            xgc_per_90=1.05,
-            clean_sheets=4,
-            bps_per_90=19.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SUN (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1025,
-            opp_defence_strength=1035,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 134, 2880, 12, 3, 5, 11.2, 2.6, 15),
-                HistoricalSeasonStat("2025-26", 148, 2700, 14, 4, 9, 13.1, 3.2, 18),
-            ],
-        ),
-        PlayerRecord(
-            id=216,
-            web_name="Stewart",
-            full_name="Ross Stewart",
-            team_short="SUN",
-            team_name="Sunderland",
-            position="FWD",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=26,
-            minutes=750,
-            points_per_game=2.6,
-            form=2.8,
-            xg_per_90=0.25,
-            xa_per_90=0.05,
-            xgi_per_90=0.30,
-            xgc_per_90=1.75,
-            clean_sheets=1,
-            bps_per_90=12.0,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="EVE (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1130,
-            opp_defence_strength=1160,
-            historical_seasons=[
-                HistoricalSeasonStat("2025-26", 85, 2340, 8, 2, 5, 7.8, 1.9, 8),
-            ],
-        ),
-        PlayerRecord(
-            id=217,
-            web_name="Coyle",
-            full_name="Lewie Coyle",
-            team_short="HUL",
-            team_name="Hull City",
-            position="DEF",
-            price=4.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=21,
-            minutes=900,
-            points_per_game=2.1,
-            form=2.0,
-            xg_per_90=0.03,
-            xa_per_90=0.06,
-            xgi_per_90=0.09,
-            xgc_per_90=1.85,
-            clean_sheets=1,
-            bps_per_90=11.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="ARS (A)",
-            is_home=False,
-            fixture_difficulty=5,
-            opp_attack_strength=1310,
-            opp_defence_strength=1300,
-            historical_seasons=[
-                HistoricalSeasonStat("2025-26", 92, 3240, 1, 4, 8, 1.2, 3.4, 9),
-            ],
-        ),
-        # --- FULL PREMIER LEAGUE POOL (UNBIASED ACROSS ALL CLUBS & PRICE TIERS) ---
-        PlayerRecord(
-            id=218,
-            web_name="Raya",
-            full_name="David Raya",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="GKP",
-            price=5.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=55,
-            minutes=900,
-            points_per_game=5.5,
-            form=6.0,
-            xg_per_90=0.0,
-            xa_per_90=0.01,
-            xgi_per_90=0.01,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=21.5,
-            in_dreamteam=True,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 135, 2880, 0, 0, 16, 0.0, 0.1, 13),
-                HistoricalSeasonStat("2024-25", 162, 3420, 0, 1, 17, 0.0, 0.3, 18),
-                HistoricalSeasonStat("2025-26", 168, 3420, 0, 1, 18, 0.0, 0.2, 20),
-            ],
-        ),
-        PlayerRecord(
-            id=219,
-            web_name="Flekken",
-            full_name="Mark Flekken",
-            team_short="BRE",
-            team_name="Brentford",
-            position="GKP",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=40,
-            minutes=900,
-            points_per_game=4.0,
-            form=4.3,
-            xg_per_90=0.0,
-            xa_per_90=0.04,
-            xgi_per_90=0.04,
-            xgc_per_90=1.35,
-            clean_sheets=2,
-            bps_per_90=18.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BHA (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 119, 3285, 0, 1, 7, 0.0, 0.5, 10),
-                HistoricalSeasonStat("2024-25", 134, 3420, 0, 2, 9, 0.0, 0.8, 15),
-                HistoricalSeasonStat("2025-26", 130, 3330, 0, 1, 8, 0.0, 0.6, 14),
-            ],
-        ),
-        PlayerRecord(
-            id=220,
-            web_name="Fabianski",
-            full_name="Lukasz Fabianski",
-            team_short="WHU",
-            team_name="West Ham",
-            position="GKP",
-            price=4.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=31,
-            minutes=810,
-            points_per_game=3.4,
-            form=3.6,
-            xg_per_90=0.0,
-            xa_per_90=0.0,
-            xgi_per_90=0.0,
-            xgc_per_90=1.38,
-            clean_sheets=2,
-            bps_per_90=16.5,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="WOL (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1060,
-            opp_defence_strength=1075,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 78, 1980, 0, 0, 5, 0.0, 0.0, 8),
-                HistoricalSeasonStat("2025-26", 88, 2160, 0, 0, 6, 0.0, 0.0, 9),
-            ],
-        ),
-        PlayerRecord(
-            id=221,
-            web_name="Saliba",
-            full_name="William Saliba",
-            team_short="ARS",
-            team_name="Arsenal",
-            position="DEF",
-            price=6.2,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=62,
-            minutes=900,
-            points_per_game=6.2,
-            form=6.6,
-            xg_per_90=0.07,
-            xa_per_90=0.04,
-            xgi_per_90=0.11,
-            xgc_per_90=0.68,
-            clean_sheets=6,
-            bps_per_90=24.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="HUL (H)",
-            is_home=True,
-            fixture_difficulty=1,
-            opp_attack_strength=1015,
-            opp_defence_strength=1030,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 164, 3420, 2, 1, 18, 1.8, 0.9, 24),
-                HistoricalSeasonStat("2024-25", 160, 3330, 2, 1, 16, 1.9, 1.0, 21),
-                HistoricalSeasonStat("2025-26", 166, 3420, 3, 1, 17, 2.2, 1.1, 23),
-            ],
-        ),
-        PlayerRecord(
-            id=222,
-            web_name="Aina",
-            full_name="Ola Aina",
-            team_short="NFO",
-            team_name="Nott'm Forest",
-            position="DEF",
-            price=5.1,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=49,
-            minutes=900,
-            points_per_game=4.9,
-            form=5.2,
-            xg_per_90=0.06,
-            xa_per_90=0.11,
-            xgi_per_90=0.17,
-            xgc_per_90=1.02,
-            clean_sheets=4,
-            bps_per_90=20.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="MCI (H)",
-            is_home=True,
-            fixture_difficulty=4,
-            opp_attack_strength=1290,
-            opp_defence_strength=1260,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 148, 3150, 2, 4, 12, 1.8, 3.5, 20),
-                HistoricalSeasonStat("2025-26", 136, 3060, 2, 3, 10, 1.6, 3.1, 17),
-            ],
-        ),
-        PlayerRecord(
-            id=223,
-            web_name="Robinson",
-            full_name="Antonee Robinson",
-            team_short="FUL",
-            team_name="Fulham",
-            position="DEF",
-            price=5.0,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=48,
-            minutes=900,
-            points_per_game=4.8,
-            form=5.5,
-            xg_per_90=0.04,
-            xa_per_90=0.24,
-            xgi_per_90=0.28,
-            xgc_per_90=1.08,
-            clean_sheets=3,
-            bps_per_90=21.0,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SOU (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1030,
-            opp_defence_strength=1045,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 112, 3263, 0, 6, 9, 0.8, 5.4, 15),
-                HistoricalSeasonStat("2024-25", 146, 3330, 1, 9, 10, 1.2, 7.8, 21),
-                HistoricalSeasonStat("2025-26", 142, 3240, 1, 8, 10, 1.1, 7.2, 19),
-            ],
-        ),
-        PlayerRecord(
-            id=224,
-            web_name="Hall",
-            full_name="Lewis Hall",
-            team_short="NEW",
-            team_name="Newcastle",
-            position="DEF",
-            price=4.9,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=47,
-            minutes=880,
-            points_per_game=4.7,
-            form=5.4,
-            xg_per_90=0.07,
-            xa_per_90=0.21,
-            xgi_per_90=0.28,
-            xgc_per_90=1.04,
-            clean_sheets=4,
-            bps_per_90=20.4,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=1,
-            next_opponent="IPS (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1035,
-            opp_defence_strength=1040,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 132, 2880, 2, 6, 10, 1.9, 5.2, 16),
-                HistoricalSeasonStat("2025-26", 144, 3060, 2, 7, 11, 2.1, 6.0, 18),
-            ],
-        ),
-        PlayerRecord(
-            id=225,
-            web_name="Van den Berg",
-            full_name="Sepp van den Berg",
-            team_short="BRE",
-            team_name="Brentford",
-            position="DEF",
-            price=4.2,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=34,
-            minutes=900,
-            points_per_game=3.4,
-            form=3.6,
-            xg_per_90=0.05,
-            xa_per_90=0.03,
-            xgi_per_90=0.08,
-            xgc_per_90=1.35,
-            clean_sheets=2,
-            bps_per_90=15.4,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="BHA (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1190,
-            opp_defence_strength=1170,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 94, 2880, 1, 1, 7, 1.5, 0.9, 8),
-                HistoricalSeasonStat("2025-26", 102, 3060, 2, 1, 8, 1.8, 1.0, 10),
-            ],
-        ),
-        PlayerRecord(
-            id=226,
-            web_name="Harwood-Bellis",
-            full_name="Taylor Harwood-Bellis",
-            team_short="SOU",
-            team_name="Southampton",
-            position="DEF",
-            price=4.1,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=32,
-            minutes=900,
-            points_per_game=3.2,
-            form=3.3,
-            xg_per_90=0.08,
-            xa_per_90=0.04,
-            xgi_per_90=0.12,
-            xgc_per_90=1.55,
-            clean_sheets=2,
-            bps_per_90=14.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="FUL (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1140,
-            opp_defence_strength=1140,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 88, 3060, 2, 1, 4, 2.2, 1.1, 7),
-                HistoricalSeasonStat("2025-26", 96, 3150, 2, 2, 6, 2.4, 1.4, 9),
-            ],
-        ),
-        PlayerRecord(
-            id=227,
-            web_name="B.Fernandes",
-            full_name="Bruno Fernandes",
-            team_short="MUN",
-            team_name="Man Utd",
-            position="MID",
-            price=8.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=61,
-            minutes=900,
-            points_per_game=6.1,
-            form=6.8,
-            xg_per_90=0.36,
-            xa_per_90=0.39,
-            xgi_per_90=0.75,
-            xgc_per_90=1.12,
-            clean_sheets=4,
-            bps_per_90=25.6,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="LEI (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1045,
-            opp_defence_strength=1040,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 166, 3118, 10, 8, 7, 10.1, 11.3, 24),
-                HistoricalSeasonStat("2024-25", 184, 3330, 12, 11, 10, 11.4, 11.8, 28),
-                HistoricalSeasonStat("2025-26", 190, 3330, 13, 12, 10, 11.9, 12.2, 30),
-            ],
-        ),
-        PlayerRecord(
-            id=228,
-            web_name="Son",
-            full_name="Son Heung-min",
-            team_short="TOT",
-            team_name="Tottenham",
-            position="MID",
-            price=9.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=64,
-            minutes=860,
-            points_per_game=6.4,
-            form=6.9,
-            xg_per_90=0.46,
-            xa_per_90=0.34,
-            xgi_per_90=0.80,
-            xgc_per_90=1.22,
-            clean_sheets=3,
-            bps_per_90=24.8,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=2,
-            next_opponent="LEE (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1070,
-            opp_defence_strength=1050,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 213, 2934, 17, 10, 8, 12.8, 9.4, 29),
-                HistoricalSeasonStat("2024-25", 196, 2880, 15, 11, 8, 12.5, 9.8, 26),
-                HistoricalSeasonStat("2025-26", 192, 2820, 15, 10, 9, 12.1, 9.2, 25),
-            ],
-        ),
-        PlayerRecord(
-            id=229,
-            web_name="Gordon",
-            full_name="Anthony Gordon",
-            team_short="NEW",
-            team_name="Newcastle",
-            position="MID",
-            price=7.4,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=59,
-            minutes=880,
-            points_per_game=5.9,
-            form=6.6,
-            xg_per_90=0.39,
-            xa_per_90=0.31,
-            xgi_per_90=0.70,
-            xgc_per_90=1.04,
-            clean_sheets=4,
-            bps_per_90=22.2,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=2,
-            next_opponent="IPS (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1035,
-            opp_defence_strength=1040,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 183, 2896, 11, 16, 10, 10.2, 8.8, 19),
-                HistoricalSeasonStat("2024-25", 176, 2970, 11, 12, 10, 10.8, 8.9, 21),
-                HistoricalSeasonStat("2025-26", 185, 3060, 12, 13, 11, 11.4, 9.5, 23),
-            ],
-        ),
-        PlayerRecord(
-            id=230,
-            web_name="Bowen",
-            full_name="Jarrod Bowen",
-            team_short="WHU",
-            team_name="West Ham",
-            position="MID",
-            price=7.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=58,
-            minutes=900,
-            points_per_game=5.8,
-            form=6.3,
-            xg_per_90=0.41,
-            xa_per_90=0.25,
-            xgi_per_90=0.66,
-            xgc_per_90=1.38,
-            clean_sheets=2,
-            bps_per_90=21.8,
-            in_dreamteam=False,
-            penalties_order=2,
-            corners_order=2,
-            next_opponent="WOL (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1060,
-            opp_defence_strength=1050,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 182, 3022, 16, 6, 5, 12.1, 5.9, 19),
-                HistoricalSeasonStat("2024-25", 174, 3150, 14, 8, 7, 11.8, 6.8, 21),
-                HistoricalSeasonStat("2025-26", 180, 3240, 15, 8, 8, 12.4, 7.1, 22),
-            ],
-        ),
-        PlayerRecord(
-            id=231,
-            web_name="Smith Rowe",
-            full_name="Emile Smith Rowe",
-            team_short="FUL",
-            team_name="Fulham",
-            position="MID",
-            price=5.6,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=49,
-            minutes=820,
-            points_per_game=4.9,
-            form=5.4,
-            xg_per_90=0.29,
-            xa_per_90=0.24,
-            xgi_per_90=0.53,
-            xgc_per_90=1.08,
-            clean_sheets=3,
-            bps_per_90=19.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="SOU (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1030,
-            opp_defence_strength=1045,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 138, 2610, 7, 7, 9, 6.8, 6.1, 15),
-                HistoricalSeasonStat("2025-26", 145, 2790, 8, 8, 10, 7.4, 6.8, 17),
-            ],
-        ),
-        PlayerRecord(
-            id=232,
-            web_name="Winks",
-            full_name="Harry Winks",
-            team_short="LEI",
-            team_name="Leicester",
-            position="MID",
-            price=4.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=28,
-            minutes=900,
-            points_per_game=2.8,
-            form=2.9,
-            xg_per_90=0.05,
-            xa_per_90=0.10,
-            xgi_per_90=0.15,
-            xgc_per_90=1.55,
-            clean_sheets=2,
-            bps_per_90=14.2,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="MUN (A)",
-            is_home=False,
-            fixture_difficulty=3,
-            opp_attack_strength=1180,
-            opp_defence_strength=1160,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 92, 3060, 2, 3, 5, 1.6, 2.8, 8),
-                HistoricalSeasonStat("2025-26", 96, 3150, 2, 4, 6, 1.8, 3.1, 9),
-            ],
-        ),
-        PlayerRecord(
-            id=233,
-            web_name="Watkins",
-            full_name="Ollie Watkins",
-            team_short="AVL",
-            team_name="Aston Villa",
-            position="FWD",
-            price=8.9,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=65,
-            minutes=870,
-            points_per_game=6.5,
-            form=6.8,
-            xg_per_90=0.58,
-            xa_per_90=0.22,
-            xgi_per_90=0.80,
-            xgc_per_90=1.15,
-            clean_sheets=3,
-            bps_per_90=24.2,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="BOU (H)",
-            is_home=True,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1110,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 228, 3222, 19, 18, 8, 16.9, 7.6, 29),
-                HistoricalSeasonStat("2024-25", 198, 3060, 17, 10, 9, 16.2, 6.8, 25),
-                HistoricalSeasonStat("2025-26", 204, 3150, 18, 11, 9, 16.8, 7.1, 27),
-            ],
-        ),
-        PlayerRecord(
-            id=234,
-            web_name="Wood",
-            full_name="Chris Wood",
-            team_short="NFO",
-            team_name="Nott'm Forest",
-            position="FWD",
-            price=6.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=55,
-            minutes=850,
-            points_per_game=5.5,
-            form=5.8,
-            xg_per_90=0.52,
-            xa_per_90=0.09,
-            xgi_per_90=0.61,
-            xgc_per_90=1.02,
-            clean_sheets=4,
-            bps_per_90=21.2,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=None,
-            next_opponent="MCI (H)",
-            is_home=True,
-            fixture_difficulty=4,
-            opp_attack_strength=1290,
-            opp_defence_strength=1260,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 131, 1809, 14, 1, 4, 11.9, 1.5, 19),
-                HistoricalSeasonStat("2024-25", 178, 2880, 18, 3, 11, 16.4, 2.5, 26),
-                HistoricalSeasonStat("2025-26", 156, 2700, 15, 3, 9, 14.2, 2.2, 21),
-            ],
-        ),
-        PlayerRecord(
-            id=235,
-            web_name="Cunha",
-            full_name="Matheus Cunha",
-            team_short="WOL",
-            team_name="Wolves",
-            position="FWD",
-            price=7.1,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=59,
-            minutes=890,
-            points_per_game=5.9,
-            form=6.4,
-            xg_per_90=0.45,
-            xa_per_90=0.25,
-            xgi_per_90=0.70,
-            xgc_per_90=1.42,
-            clean_sheets=2,
-            bps_per_90=23.8,
-            in_dreamteam=False,
-            penalties_order=1,
-            corners_order=1,
-            next_opponent="WHU (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1090,
-            historical_seasons=[
-                HistoricalSeasonStat("2023-24", 135, 2440, 12, 7, 5, 9.5, 4.1, 19),
-                HistoricalSeasonStat("2024-25", 176, 3060, 15, 8, 6, 12.8, 6.4, 26),
-                HistoricalSeasonStat("2025-26", 182, 3150, 16, 9, 7, 13.4, 6.9, 28),
-            ],
-        ),
-        PlayerRecord(
-            id=236,
-            web_name="Strand Larsen",
-            full_name="Jørgen Strand Larsen",
-            team_short="WOL",
-            team_name="Wolves",
-            position="FWD",
-            price=5.5,
-            status="a",
-            chance_of_playing_next_round=100,
-            fpl_news="",
-            total_points=47,
-            minutes=860,
-            points_per_game=4.7,
-            form=5.2,
-            xg_per_90=0.41,
-            xa_per_90=0.12,
-            xgi_per_90=0.53,
-            xgc_per_90=1.42,
-            clean_sheets=2,
-            bps_per_90=17.8,
-            in_dreamteam=False,
-            penalties_order=None,
-            corners_order=None,
-            next_opponent="WHU (A)",
-            is_home=False,
-            fixture_difficulty=2,
-            opp_attack_strength=1120,
-            opp_defence_strength=1090,
-            historical_seasons=[
-                HistoricalSeasonStat("2024-25", 134, 2880, 11, 4, 6, 10.6, 3.2, 15),
-                HistoricalSeasonStat("2025-26", 142, 2970, 12, 5, 7, 11.2, 3.6, 17),
-            ],
-        ),
-    ]
-    return seed_players
-
-
-def load_players(prefer_live_cache: bool = True) -> List[PlayerRecord]:
-    """
-    Loads player records from the live FPL API cache if present (and merges with seed
-    overrides), otherwise returns the 2026/27 seed dataset and saves to SQLite.
-    """
-    init_db()
-    records = _parse_cached_fpl_api() if prefer_live_cache else None
-    if not records:
-        records = get_seed_dataset_2026_27()
-
-    # Persist to SQLite for fast querying
-    with sqlite3.connect(DB_PATH) as conn:
-        now = time.time()
-        for r in records:
-            hist_json = json.dumps([asdict(h) for h in r.historical_seasons])
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO players VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                """,
-                (
-                    r.id,
-                    r.web_name,
-                    r.full_name,
-                    r.team_short,
-                    r.team_name,
-                    r.position,
-                    r.price,
-                    r.status,
-                    r.chance_of_playing_next_round,
-                    r.fpl_news,
-                    r.total_points,
-                    r.minutes,
-                    r.points_per_game,
-                    r.form,
-                    r.xg_per_90,
-                    r.xa_per_90,
-                    r.xgi_per_90,
-                    r.xgc_per_90,
-                    r.clean_sheets,
-                    r.bps_per_90,
-                    int(r.in_dreamteam),
-                    r.penalties_order,
-                    r.corners_order,
-                    r.next_opponent,
-                    int(r.is_home),
-                    r.fixture_difficulty,
-                    r.opp_attack_strength,
-                    r.opp_defence_strength,
-                    hist_json,
-                    now,
+        records.append(
+            PlayerRecord(
+                id=pid,
+                web_name=web_name,
+                full_name=full_name,
+                team_id=tid,
+                team_short=team_obj.get("short_name", "UNK"),
+                team_name=team_obj.get("name", "Unknown"),
+                position=POSITION_MAP.get(int(el.get("element_type", 3)), "MID"),
+                price=round(float(el.get("now_cost", 50)) / 10.0, 1),
+                status=el.get("status", "a"),
+                chance_of_playing_next_round=el.get("chance_of_playing_next_round"),
+                fpl_news=el.get("news", "") or "",
+                total_points=int(el.get("total_points", 0) or 0),
+                minutes=mins,
+                starts=int(el.get("starts", 0) or 0),
+                points_per_game=float(el.get("points_per_game", 0.0) or 0.0),
+                form=float(el.get("form", 0.0) or 0.0),
+                value_form=float(el.get("value_form", 0.0) or 0.0),
+                value_season=float(el.get("value_season", 0.0) or 0.0),
+                selected_by_percent=float(el.get("selected_by_percent", 0.0) or 0.0),
+                xg_per_90=float(
+                    el.get("expected_goals_per_90")
+                    or round(float(el.get("expected_goals", 0.0) or 0.0) / nineties, 2)
                 ),
+                xa_per_90=float(
+                    el.get("expected_assists_per_90")
+                    or round(float(el.get("expected_assists", 0.0) or 0.0) / nineties, 2)
+                ),
+                xgi_per_90=float(
+                    el.get("expected_goal_involvements_per_90")
+                    or round(
+                        float(el.get("expected_goal_involvements", 0.0) or 0.0) / nineties,
+                        2,
+                    )
+                ),
+                xgc_per_90=float(
+                    el.get("expected_goals_conceded_per_90")
+                    or round(
+                        float(el.get("expected_goals_conceded", 0.0) or 0.0) / nineties, 2
+                    )
+                ),
+                defensive_contribution_per_90=float(
+                    el.get("defensive_contribution_per_90", 0.0) or 0.0
+                ),
+                ict_per_90=round(float(el.get("ict_index", 0.0) or 0.0) / nineties, 2),
+                threat_per_90=round(float(el.get("threat", 0.0) or 0.0) / nineties, 1),
+                creativity_per_90=round(
+                    float(el.get("creativity", 0.0) or 0.0) / nineties, 1
+                ),
+                saves_per_90=float(el.get("saves_per_90", 0.0) or 0.0),
+                clean_sheets=int(el.get("clean_sheets", 0) or 0),
+                bps_per_90=round(float(el.get("bps", 0) or 0) / nineties, 1),
+                bonus=int(el.get("bonus", 0) or 0),
+                in_dreamteam=bool(el.get("in_dreamteam", False)),
+                penalties_order=el.get("penalties_order"),
+                corners_order=el.get("corners_and_indirect_freekicks_order"),
+                direct_freekicks_order=el.get("direct_freekicks_order"),
+                next_opponent=fix_info["opponent"],
+                is_home=fix_info["is_home"],
+                fixture_difficulty=fix_info["difficulty"],
+                team_attack_strength=fix_info["team_att"],
+                team_defence_strength=fix_info["team_def"],
+                opp_attack_strength=fix_info["opp_att"],
+                opp_defence_strength=fix_info["opp_def"],
+                historical_seasons=hist_objs,
+                gw_history=gw_hist,
             )
-        conn.commit()
+        )
     return records

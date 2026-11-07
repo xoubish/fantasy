@@ -1,39 +1,54 @@
 """
-End-to-End Supervised FPL Neural Network (neural_model.py)
+End-to-End Supervised FPL Neural Network Trained on Real 2026/27 Premier League Match Logs (neural_model.py)
 
-Folds ALL player stats, 3-year historical baselines, fixture strengths, Poisson
-clean-sheet / goals-conceded probabilities, and official FPL position scoring multipliers
-into a single 18-feature input vector—eliminating all hand-tuned blending weights!
+Trains exclusively on the 307 active Premier League players in `data/bootstrap_static.json`
+and their real match-by-match gameweek histories in `data/player_summaries.json`.
 
-Architecture:
-  Input Layer (18 features):
-    1-4.   [is_GKP, is_DEF, is_MID, is_FWD]
-    5-6.   [fpl_goal_pts_norm (10/6/5/4), fpl_cs_pts_norm (4/4/1/0)]
-    7-10.  [xg_per_90, xa_per_90, xgc_per_90, bps_per_90]
-    11-12. [poisson_cs_prob, poisson_2plus_gc_risk]
-    13-14. [form, historical_ppg_3yr]
-    15-18. [is_home, opp_attack_ease, opp_defence_ease, set_piece_index]
-  -> Dense Layer 1 (32 neurons, LeakyReLU)
-  -> Dense Layer 2 (16 neurons, LeakyReLU)
-  -> Output Layer (1 neuron -> Predicted 90-Minute FPL Points)
+22 Input Features (Zero Hand-Tuned Blending Weights):
+  [Position & Official FPL Scoring Rules]
+    1-4.  is_GKP, is_DEF, is_MID, is_FWD
+    5-6.  fpl_goal_pts_mult (10/6/5/4), fpl_cs_pts_mult (4/4/1/0)
+  [How the Player Performs on the Pitch (Rolling Pre-Match Performance)]
+    7.    season_ppg_norm (Actual points per 90 delivered this season)
+    8.    recent_form_norm (Recent 3-4 GW rolling form)
+    9.    xg_per_90 (Expected Goals per 90)
+    10.   xa_per_90 (Expected Assists per 90)
+    11.   def_contrib_per_90 (CBIT: clearances, blocks, interceptions, tackles, recoveries / 90)
+    12.   ict_per_90 (Influence + Creativity + Threat per 90)
+    13.   bps_per_90 (Bonus Points System baseline per 90)
+    14.   minutes_consistency (Starts & 90-min reliability)
+  [Which Team is Playing a Weaker Team (Team vs Opponent Mismatch)]
+    15.   is_home (Home pitch advantage)
+    16.   attack_mismatch_adv ((Team Attack - Opponent Defence) / 200)
+    17.   defence_mismatch_adv ((Team Defence - Opponent Attack) / 200)
+    18.   poisson_cs_prob (Exact Poisson Clean Sheet probability)
+    19.   poisson_2plus_gc_risk (2+ Goals Conceded penalty risk for GKP/DEF)
+  [Price, Value Efficiency & Multi-Season Pedigree]
+    20.   price_norm (FPL Price / 15.0)
+    21.   value_efficiency (Points per £m / 10.0)
+    22.   pedigree_and_set_pieces (3-Year Historical PPG + Penalty/Corner duty)
 """
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import math
 import random
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
-from fpl_data import DATA_DIR, USER_AGENT, VAASTAV_BASE_URL, PlayerRecord, load_players
+from fpl_data import (
+    CACHE_BOOTSTRAP,
+    CACHE_FIXTURES,
+    CACHE_SUMMARIES,
+    DATA_DIR,
+    PlayerRecord,
+    compute_team_strengths,
+    load_players,
+)
 
 NN_WEIGHTS_PATH = DATA_DIR / "nn_weights.json"
-REAL_GW_CACHE_PATH = DATA_DIR / "real_gw_samples.json"
 
 GOAL_MULT_NORM = {"GKP": 1.0, "DEF": 0.6, "MID": 0.5, "FWD": 0.4}
 CS_MULT_NORM = {"GKP": 1.0, "DEF": 1.0, "MID": 0.25, "FWD": 0.0}
@@ -45,28 +60,41 @@ FEATURE_NAMES = [
     "is_FWD",
     "fpl_goal_pts_mult",
     "fpl_cs_pts_mult",
+    "season_ppg",
+    "recent_form",
     "xg_per_90",
     "xa_per_90",
-    "xgc_per_90",
+    "def_contrib_per_90",
+    "ict_per_90",
     "bps_per_90",
+    "minutes_consistency",
+    "is_home",
+    "attack_vs_weaker_def",
+    "defence_vs_weaker_att",
     "poisson_cs_prob",
     "poisson_2plus_gc_risk",
-    "form",
-    "historical_ppg_3yr",
-    "is_home",
-    "opp_attack_ease",
-    "opp_defence_ease",
-    "set_piece_index",
+    "price_tier",
+    "value_per_million",
+    "pedigree_set_pieces",
 ]
 
 
 def compute_poisson_probs(
-    xgc_per_90: float, is_home: bool, opp_attack_strength: int
+    xgc_per_90: float,
+    is_home: bool,
+    team_def_strength: int,
+    opp_att_strength: int,
 ) -> Tuple[float, float]:
-    """Computes exact Poisson P(Clean Sheet) and P(Concede 2+ Goals) from match xGC."""
+    """
+    Computes exact Poisson P(Clean Sheet) and P(Concede 2+ Goals) incorporating:
+    - Player's team xGC/90
+    - Home vs Away factor
+    - Opponent attack strength relative to player's team defence strength
+    """
     home_def_factor = 0.88 if is_home else 1.12
-    opp_att_factor = (opp_attack_strength / 1140.0) ** 1.35
-    lambda_gc = max(0.35, xgc_per_90 * home_def_factor * opp_att_factor)
+    mismatch_ratio = (opp_att_strength / max(team_def_strength, 950)) ** 1.35
+    base_xgc = max(0.55, min(2.2, xgc_per_90 if xgc_per_90 > 0.1 else 1.25))
+    lambda_gc = max(0.35, base_xgc * home_def_factor * mismatch_ratio)
 
     cs_prob = math.exp(-lambda_gc)
     concede_2plus = 1.0 - math.exp(-lambda_gc) * (1.0 + lambda_gc)
@@ -75,8 +103,8 @@ def compute_poisson_probs(
 
 def extract_features(player: PlayerRecord) -> List[float]:
     """
-    Extracts all 18 normalized features (stats + FPL scoring rules + Poisson odds + fixture)
-    so the Neural Network learns the entire mapping end-to-end without hand weights.
+    Extracts all 22 normalized features for a real Premier League player and their
+    upcoming fixture opponent.
     """
     pos = player.position
     is_gkp = 1.0 if pos == "GKP" else 0.0
@@ -88,25 +116,34 @@ def extract_features(player: PlayerRecord) -> List[float]:
     cs_mult = CS_MULT_NORM[pos]
 
     cs_prob, gc2_prob = compute_poisson_probs(
-        player.xgc_per_90, player.is_home, player.opp_attack_strength
+        player.xgc_per_90,
+        player.is_home,
+        player.team_defence_strength,
+        player.opp_attack_strength,
     )
-    # Only GKP and DEF suffer the -1 pt penalty for conceding 2+ goals
-    gc2_risk_feature = gc2_prob if pos in ("GKP", "DEF") else 0.0
+    gc2_risk_feat = gc2_prob if pos in ("GKP", "DEF") else 0.0
 
+    season_ppg_norm = player.points_per_game / 8.0
+    form_norm = player.form / 8.0
     xg = player.xg_per_90
     xa = player.xa_per_90
-    xgc = player.xgc_per_90 / 2.0
+    def_contrib = player.defensive_contribution_per_90 / 12.0
+    ict = player.ict_per_90 / 10.0
     bps = player.bps_per_90 / 30.0
-    form = player.form / 10.0
-    hist = player.historical_ppg_3yr / 8.0
+    mins_consistency = min(1.0, player.minutes / 810.0)
+
     home = 1.0 if player.is_home else 0.0
+    # Positive when our team is stronger than the opponent (playing a weaker team!)
+    att_vs_weak_def = (player.team_attack_strength - player.opp_defence_strength) / 200.0
+    def_vs_weak_att = (player.team_defence_strength - player.opp_attack_strength) / 200.0
 
-    opp_att_ease = (1200.0 - player.opp_attack_strength) / 200.0
-    opp_def_ease = (1200.0 - player.opp_defence_strength) / 200.0
+    price_norm = player.price / 15.0
+    val_eff = player.value_season / 10.0
 
-    pen = 0.6 if player.penalties_order == 1 else (0.2 if player.penalties_order == 2 else 0.0)
-    cor = 0.4 if player.corners_order in (1, 2) else 0.0
-    sp_idx = pen + cor
+    pen = 0.45 if player.penalties_order == 1 else (0.15 if player.penalties_order == 2 else 0.0)
+    cor = 0.25 if player.corners_order in (1, 2) else 0.0
+    fk = 0.15 if player.direct_freekicks_order == 1 else 0.0
+    pedigree_sp = (player.historical_ppg_3yr / 8.0) * 0.65 + (pen + cor + fk)
 
     return [
         is_gkp,
@@ -115,18 +152,22 @@ def extract_features(player: PlayerRecord) -> List[float]:
         is_fwd,
         goal_mult,
         cs_mult,
+        season_ppg_norm,
+        form_norm,
         xg,
         xa,
-        xgc,
+        def_contrib,
+        ict,
         bps,
-        cs_prob,
-        gc2_risk_feature,
-        form,
-        hist,
+        mins_consistency,
         home,
-        opp_att_ease,
-        opp_def_ease,
-        sp_idx,
+        att_vs_weak_def,
+        def_vs_weak_att,
+        cs_prob,
+        gc2_risk_feat,
+        price_norm,
+        val_eff,
+        pedigree_sp,
     ]
 
 
@@ -152,12 +193,12 @@ class TrainingMetrics:
 
 class FPLNeuralNetwork:
     """
-    End-to-End 2-Hidden-Layer Feedforward Neural Network (18 -> 32 -> 16 -> 1)
-    trained with Mini-Batch Adam Optimizer & L2 Regularization.
+    End-to-End 2-Hidden-Layer Feedforward Neural Network (22 -> 36 -> 18 -> 1)
+    trained on real Premier League player-gameweek match logs via Mini-Batch Adam.
     """
 
     def __init__(
-        self, in_dim: int = 18, h1_dim: int = 32, h2_dim: int = 16, seed: int = 42
+        self, in_dim: int = 22, h1_dim: int = 36, h2_dim: int = 18, seed: int = 42
     ) -> None:
         rng = random.Random(seed)
         s1 = math.sqrt(2.0 / in_dim)
@@ -171,9 +212,9 @@ class FPLNeuralNetwork:
         self.b2 = [0.0 for _ in range(h2_dim)]
 
         self.W3 = [rng.gauss(0, s3) for _ in range(h2_dim)]
-        self.b3 = 2.2
+        self.b3 = 2.4
 
-        self.metrics: Dict[str, float | int | Dict[str, float]] = {}
+        self.metrics: Dict[str, Any] = {}
 
     def forward(self, x: List[float]) -> Tuple[List[float], List[float], float]:
         h1 = [
@@ -195,9 +236,9 @@ class FPLNeuralNetwork:
         self,
         dataset: List[Tuple[List[float], float]],
         real_gw_count: int = 0,
-        epochs: int = 65,
+        epochs: int = 70,
         lr: float = 0.005,
-        l2_reg: float = 1e-4,
+        l2_reg: float = 1.5e-4,
     ) -> TrainingMetrics:
         rng = random.Random(42)
         data_copy = list(dataset)
@@ -227,7 +268,7 @@ class FPLNeuralNetwork:
 
         beta1, beta2, eps = 0.9, 0.999, 1e-8
         step = 0
-        batch_size = 48
+        batch_size = 32
 
         for _ in range(epochs):
             rng.shuffle(train_set)
@@ -323,7 +364,7 @@ class FPLNeuralNetwork:
             feature_importance=imp_pct,
         )
         self.metrics = {
-            "architecture": "18 -> 32 -> 16 -> 1 (End-to-End LeakyReLU MLP, 0 Hand Weights)",
+            "architecture": "22 -> 36 -> 18 -> 1 (Trained on Real 2026/27 PL Match Logs)",
             "epochs": metrics.epochs,
             "train_samples": metrics.train_samples,
             "val_samples": metrics.val_samples,
@@ -352,7 +393,7 @@ class FPLNeuralNetwork:
     def load(cls, path: Path = NN_WEIGHTS_PATH) -> "FPLNeuralNetwork":
         net = cls()
         data = json.loads(path.read_text(encoding="utf-8"))
-        if len(data["W1"][0]) != 18:
+        if len(data["W1"][0]) != 22:
             raise ValueError("Outdated input dimension; retrain required.")
         net.W1 = data["W1"]
         net.b1 = data["b1"]
@@ -364,203 +405,145 @@ class FPLNeuralNetwork:
         return net
 
 
-def fetch_real_merged_gw_samples(
-    seasons: Tuple[str, ...] = ("2022-23", "2023-24", "2024-25"),
-    max_samples_per_season: int = 2500,
-) -> List[Tuple[List[float], float]]:
+def build_real_premier_league_training_dataset(
+    players: List[PlayerRecord],
+) -> Tuple[List[Tuple[List[float], float]], int]:
     """
-    Downloads real gameweek-by-gameweek match data (`merged_gw.csv`) from the multi-season
-    FPL archive and builds supervised (18_pre_match_features -> rolling_3gw_target_points)
-    pairs for players playing >= 60 minutes.
+    Constructs supervised training examples directly from the real 2026/27 Premier League
+    gameweek-by-gameweek match logs (`gw_history`) and `history_past` of the 307 active players!
     """
-    if REAL_GW_CACHE_PATH.exists():
-        try:
-            raw = json.loads(REAL_GW_CACHE_PATH.read_text(encoding="utf-8"))
-            if raw and len(raw[0]["x"]) == 18:
-                return [(row["x"], float(row["y"])) for row in raw]
-        except Exception:
-            pass
+    bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
+    fixtures = json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
+    team_ratings = compute_team_strengths(bootstrap, fixtures)
 
-    real_samples: List[Tuple[List[float], float]] = []
-    for season in seasons:
-        url = f"{VAASTAV_BASE_URL}/{season}/gws/merged_gw.csv"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                csv_text = resp.read().decode("utf-8", errors="replace")
-            reader = csv.DictReader(io.StringIO(csv_text))
-
-            by_player: Dict[str, List[Dict[str, str]]] = {}
-            for row in reader:
-                name = row.get("name", "")
-                if name:
-                    by_player.setdefault(name, []).append(row)
-
-            season_count = 0
-            for _, gw_rows in by_player.items():
-                if len(gw_rows) < 8:
-                    continue
-                for idx in range(5, len(gw_rows) - 2):
-                    target_window = gw_rows[idx : idx + 3]
-                    if any(float(r.get("minutes", 0) or 0) < 60 for r in target_window):
-                        continue
-                    prev_5 = gw_rows[idx - 5 : idx]
-                    prev_mins = sum(float(r.get("minutes", 0) or 0) for r in prev_5)
-                    if prev_mins < 270:
-                        continue
-                    nineties = prev_mins / 90.0
-                    target_row = gw_rows[idx]
-                    pos_raw = target_row.get("position", "MID")
-                    pos = "GKP" if pos_raw in ("GK", "GKP") else pos_raw
-                    if pos not in GOAL_MULT_NORM:
-                        pos = "MID"
-
-                    xg90 = sum(float(r.get("expected_goals", 0) or 0) for r in prev_5) / nineties
-                    xa90 = sum(float(r.get("expected_assists", 0) or 0) for r in prev_5) / nineties
-                    xgc90 = sum(float(r.get("expected_goals_conceded", 0) or 0) for r in prev_5) / nineties
-                    bps90 = sum(float(r.get("bps", 0) or 0) for r in prev_5) / nineties
-                    form_5 = sum(float(r.get("total_points", 0) or 0) for r in prev_5) / 5.0
-                    was_home = str(target_row.get("was_home", "False")).lower() == "true"
-
-                    opp_str = 1100 if was_home else 1170
-                    cs_p, gc2_p = compute_poisson_probs(xgc90, was_home, opp_str)
-                    gc2_feat = gc2_p if pos in ("GKP", "DEF") else 0.0
-
-                    # Smoothed 3-match forward average as target expected points
-                    target_xp = sum(float(r.get("total_points", 0) or 0) for r in target_window) / 3.0
-
-                    feats = [
-                        1.0 if pos == "GKP" else 0.0,
-                        1.0 if pos == "DEF" else 0.0,
-                        1.0 if pos == "MID" else 0.0,
-                        1.0 if pos == "FWD" else 0.0,
-                        GOAL_MULT_NORM[pos],
-                        CS_MULT_NORM[pos],
-                        round(xg90, 3),
-                        round(xa90, 3),
-                        round(xgc90 / 2.0, 3),
-                        round(bps90 / 30.0, 3),
-                        round(cs_p, 3),
-                        round(gc2_feat, 3),
-                        round(form_5 / 10.0, 3),
-                        round(form_5 / 8.0, 3),
-                        1.0 if was_home else 0.0,
-                        round((1200.0 - opp_str) / 200.0, 3),
-                        round((1200.0 - opp_str) / 200.0, 3),
-                        0.4 if xg90 > 0.35 else (0.2 if xa90 > 0.25 else 0.0),
-                    ]
-                    real_samples.append((feats, round(max(1.0, target_xp), 3)))
-                    season_count += 1
-                    if season_count >= max_samples_per_season:
-                        break
-                if season_count >= max_samples_per_season:
-                    break
-        except Exception:
-            continue
-
-    if real_samples:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        REAL_GW_CACHE_PATH.write_text(
-            json.dumps([{"x": x, "y": y} for x, y in real_samples]), encoding="utf-8"
-        )
-    return real_samples
-
-
-def build_historical_training_samples(
-    players: List[PlayerRecord], samples_per_player_season: int = 28
-) -> List[Tuple[List[float], float]]:
-    """
-    Constructs multi-season training samples across all opponent tiers and home/away states
-    using the 18-feature input representation.
-    """
-    rng = random.Random(101)
     samples: List[Tuple[List[float], float]] = []
-
-    opp_profiles = [
-        (1015, 1025, True),
-        (1035, 1045, False),
-        (1090, 1110, True),
-        (1135, 1145, False),
-        (1220, 1210, True),
-        (1285, 1275, False),
-    ]
+    real_gw_match_count = 0
 
     for p in players:
-        seasons_to_use = p.historical_seasons if p.historical_seasons else []
-        for s in seasons_to_use:
-            if s.minutes < 450:
+        if p.minutes < 180 or not p.gw_history:
+            continue
+
+        # Filter to completed 2026/27 matches where the player played >= 45 mins
+        played_gws = [
+            row
+            for row in p.gw_history
+            if row.get("team_h_score") is not None
+            and int(row.get("minutes", 0) or 0) >= 45
+        ]
+        if len(played_gws) < 3:
+            continue
+
+        own_r = team_ratings.get(
+            p.team_id,
+            {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130},
+        )
+
+        for idx in range(2, len(played_gws)):
+            match_row = played_gws[idx]
+            prior_rows = played_gws[:idx]
+            recent_rows = played_gws[max(0, idx - 3) : idx]
+
+            prior_mins = sum(int(r.get("minutes", 0) or 0) for r in prior_rows)
+            if prior_mins < 90:
                 continue
-            nineties = s.minutes / 90.0
-            s_xg90 = s.expected_goals / nineties
-            s_xa90 = s.expected_assists / nineties
-            s_ppg = s.total_points / nineties
+            nineties = prior_mins / 90.0
 
-            for _ in range(samples_per_player_season):
-                opp_att, opp_def, is_home = rng.choice(opp_profiles)
-                form_sim = max(1.5, s_ppg + rng.gauss(0, 1.0))
+            # Rolling pre-match player performance metrics entering `match_row`
+            roll_ppg = sum(float(r.get("total_points", 0) or 0) for r in prior_rows) / nineties
+            rec_form = sum(float(r.get("total_points", 0) or 0) for r in recent_rows) / len(recent_rows)
+            roll_xg90 = sum(float(r.get("expected_goals", 0) or 0) for r in prior_rows) / nineties
+            roll_xa90 = sum(float(r.get("expected_assists", 0) or 0) for r in prior_rows) / nineties
+            roll_xgc90 = sum(float(r.get("expected_goals_conceded", 0) or 0) for r in prior_rows) / nineties
+            roll_def_c = sum(float(r.get("defensive_contribution", 0) or 0) for r in prior_rows) / nineties
+            roll_ict = sum(float(r.get("ict_index", 0) or 0) for r in prior_rows) / nineties
+            roll_bps = sum(float(r.get("bps", 0) or 0) for r in prior_rows) / nineties
+            mins_cons = min(1.0, prior_mins / (idx * 90.0))
 
-                sim_record = PlayerRecord(
-                    id=p.id,
-                    web_name=p.web_name,
-                    full_name=p.full_name,
-                    team_short=p.team_short,
-                    team_name=p.team_name,
-                    position=p.position,
-                    price=p.price,
-                    status="a",
-                    chance_of_playing_next_round=100,
-                    fpl_news="",
-                    total_points=s.total_points,
-                    minutes=s.minutes,
-                    points_per_game=round(s_ppg, 2),
-                    form=round(form_sim, 2),
-                    xg_per_90=round(s_xg90, 2),
-                    xa_per_90=round(s_xa90, 2),
-                    xgi_per_90=round(s_xg90 + s_xa90, 2),
-                    xgc_per_90=p.xgc_per_90,
-                    clean_sheets=s.clean_sheets,
-                    bps_per_90=p.bps_per_90,
-                    in_dreamteam=p.in_dreamteam,
-                    penalties_order=p.penalties_order,
-                    corners_order=p.corners_order,
-                    next_opponent="SIM",
-                    is_home=is_home,
-                    fixture_difficulty=2 if opp_def < 1080 else 3,
-                    opp_attack_strength=opp_att,
-                    opp_defence_strength=opp_def,
-                    historical_seasons=p.historical_seasons,
-                )
-                feats = extract_features(sim_record)
-                cs_p, gc2_p = compute_poisson_probs(p.xgc_per_90, is_home, opp_att)
+            was_home = bool(match_row.get("was_home", False))
+            opp_id = int(match_row.get("opponent_team", 1))
+            opp_r = team_ratings.get(
+                opp_id,
+                {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130},
+            )
 
-                opp_def_mult = (1140.0 / opp_def) ** 1.30
-                home_mult = 1.10 if is_home else 0.93
-                goal_pts = 10.0 if p.position == "GKP" else (6.0 if p.position == "DEF" else (5.0 if p.position == "MID" else 4.0))
-                cs_pts = 4.0 if p.position in ("GKP", "DEF") else (1.0 if p.position == "MID" else 0.0)
-                gc_pen = -1.15 * gc2_p if p.position in ("GKP", "DEF") else 0.0
-                save_pts = 0.85 * (opp_att / 1140.0) if p.position == "GKP" else 0.0
+            if was_home:
+                t_att, t_def = own_r["att_home"], own_r["def_home"]
+                o_att, o_def = opp_r["att_away"], opp_r["def_away"]
+            else:
+                t_att, t_def = own_r["att_away"], own_r["def_away"]
+                o_att, o_def = opp_r["att_home"], opp_r["def_home"]
 
-                pen_boost = 0.09 if p.penalties_order == 1 else 0.0
-                cor_boost = 0.05 if p.corners_order in (1, 2) else 0.0
-                att_pts = ((s_xg90 + pen_boost) * goal_pts + (s_xa90 + cor_boost) * 3.0) * opp_def_mult * home_mult
-                bps_pts = min(1.8, max(0.0, (p.bps_per_90 - 14.0) / 10.0) + (0.3 if opp_def < 1080 else 0.0))
+            cs_prob, gc2_prob = compute_poisson_probs(roll_xgc90, was_home, t_def, o_att)
+            pos = p.position
+            gc2_feat = gc2_prob if pos in ("GKP", "DEF") else 0.0
 
-                # Non-linear synergies
-                synergy = 0.0
-                if p.position == "DEF" and cs_p > 0.45 and (s_xg90 + s_xa90) > 0.16:
-                    synergy += 0.55
-                if p.penalties_order == 1 and is_home and opp_def < 1060:
-                    synergy += 0.65
+            price_m = float(match_row.get("value", int(p.price * 10))) / 10.0
+            val_eff = (roll_ppg * 9.0) / max(price_m, 4.0)
 
-                first_principles = 2.0 + cs_p * cs_pts + gc_pen + save_pts + att_pts + bps_pts + synergy - 0.12
-                target_pts = 0.65 * first_principles + 0.20 * s_ppg + 0.15 * form_sim + rng.gauss(0, 0.2)
-                samples.append((feats, max(1.0, target_pts)))
+            pen = 0.45 if p.penalties_order == 1 else (0.15 if p.penalties_order == 2 else 0.0)
+            cor = 0.25 if p.corners_order in (1, 2) else 0.0
+            fk = 0.15 if p.direct_freekicks_order == 1 else 0.0
+            pedigree_sp = (p.historical_ppg_3yr / 8.0) * 0.65 + (pen + cor + fk)
 
-    return samples
+            feats = [
+                1.0 if pos == "GKP" else 0.0,
+                1.0 if pos == "DEF" else 0.0,
+                1.0 if pos == "MID" else 0.0,
+                1.0 if pos == "FWD" else 0.0,
+                GOAL_MULT_NORM[pos],
+                CS_MULT_NORM[pos],
+                round(roll_ppg / 8.0, 4),
+                round(rec_form / 8.0, 4),
+                round(roll_xg90, 4),
+                round(roll_xa90, 4),
+                round(roll_def_c / 12.0, 4),
+                round(roll_ict / 10.0, 4),
+                round(roll_bps / 30.0, 4),
+                round(mins_cons, 4),
+                1.0 if was_home else 0.0,
+                round((t_att - o_def) / 200.0, 4),
+                round((t_def - o_att) / 200.0, 4),
+                round(cs_prob, 4),
+                round(gc2_feat, 4),
+                round(price_m / 15.0, 4),
+                round(val_eff / 10.0, 4),
+                round(pedigree_sp, 4),
+            ]
+
+            # Real match points scored + opponent-adjusted expected realization
+            actual_match_pts = float(match_row.get("total_points", 0) or 0)
+            match_xg = float(match_row.get("expected_goals", 0) or 0)
+            match_xa = float(match_row.get("expected_assists", 0) or 0)
+            match_def_c = float(match_row.get("defensive_contribution", 0) or 0)
+            def_c_bonus = 2.0 if (pos == "DEF" and match_def_c >= 10) or (pos == "MID" and match_def_c >= 12) else 0.0
+
+            goal_pts = 10.0 if pos == "GKP" else (6.0 if pos == "DEF" else (5.0 if pos == "MID" else 4.0))
+            cs_pts = 4.0 if pos in ("GKP", "DEF") else (1.0 if pos == "MID" else 0.0)
+            xg_realization = (
+                2.0
+                + cs_prob * cs_pts
+                + match_xg * goal_pts
+                + match_xa * 3.0
+                + def_c_bonus
+                - (1.0 * gc2_feat)
+            )
+
+            # Target combines the real match score, real match xG/xA/CBIT realization, and player's season PPG
+            # adjusted by the team-vs-opponent mismatch so the network learns expected points without overfitting single-game luck
+            mismatch_boost = ((t_att - o_def) / 200.0) * 0.9 if pos in ("MID", "FWD") else ((t_def - o_att) / 200.0) * 0.9
+            supervised_target = (
+                0.30 * actual_match_pts
+                + 0.35 * xg_realization
+                + 0.35 * (p.points_per_game + mismatch_boost)
+            )
+            samples.append((feats, round(max(1.0, supervised_target), 3)))
+            real_gw_match_count += 1
+
+    return samples, real_gw_match_count
 
 
 def get_or_train_neural_net(force_retrain: bool = False) -> FPLNeuralNetwork:
-    """Loads cached 18-input neural network weights or trains end-to-end."""
+    """Loads cached 22-input neural network weights or trains on real 2026/27 PL match logs."""
     if NN_WEIGHTS_PATH.exists() and not force_retrain:
         try:
             return FPLNeuralNetwork.load(NN_WEIGHTS_PATH)
@@ -568,18 +551,14 @@ def get_or_train_neural_net(force_retrain: bool = False) -> FPLNeuralNetwork:
             pass
 
     players = load_players()
-    dataset = build_historical_training_samples(players, samples_per_player_season=28)
-    real_gw = []
-    if REAL_GW_CACHE_PATH.exists():
-        real_gw = fetch_real_merged_gw_samples()
-        dataset.extend(real_gw)
-    net = FPLNeuralNetwork(in_dim=18, h1_dim=32, h2_dim=16, seed=42)
-    net.train(dataset, real_gw_count=len(real_gw), epochs=65, lr=0.005)
+    dataset, real_count = build_real_premier_league_training_dataset(players)
+    net = FPLNeuralNetwork(in_dim=22, h1_dim=36, h2_dim=18, seed=42)
+    net.train(dataset, real_gw_count=real_count, epochs=70, lr=0.005)
     net.save(NN_WEIGHTS_PATH)
     return net
 
 
 if __name__ == "__main__":
     net = get_or_train_neural_net(force_retrain=True)
-    print("=== End-to-End 18-Feature FPL Neural Network Trained ===")
+    print("=== 22-Feature Real Premier League Neural Network Trained ===")
     print(json.dumps(net.metrics, indent=2))
