@@ -329,16 +329,6 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
   },
-  "184": {
-    "player_id": 184,
-    "web_name": "Grimes",
-    "team_short": "COV",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.15,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
-  },
   "210": {
     "player_id": 210,
     "web_name": "Wharton",
@@ -379,39 +369,9 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
   },
-  "154": {
-    "player_id": 154,
-    "web_name": "Palmer",
-    "team_short": "CHE",
-    "role_tag": "EXPLOSIVE TALISMAN",
-    "tactical_xp_delta": 0.08,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.06,
-    "coach_note": "[EXPLOSIVE TALISMAN] 1st-choice penalties vs vulnerable defence; cooling form (-1.0 trend)."
-  },
-  "368": {
-    "player_id": 368,
-    "web_name": "Szoboszlai",
-    "team_short": "LIV",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.08,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.06,
-    "coach_note": "[3-GW GREEN RUN TARGET] 1st-choice penalties vs vulnerable defence; cooling form (-1.2 trend)."
-  },
   "47": {
     "player_id": 47,
     "web_name": "Kamara",
-    "team_short": "AVL",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
-  },
-  "54": {
-    "player_id": 54,
-    "web_name": "Gomes",
     "team_short": "AVL",
     "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.0,
@@ -509,16 +469,6 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
   },
-  "576": {
-    "player_id": 576,
-    "web_name": "Stroud",
-    "team_short": "HUL",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
-  },
   "259": {
     "player_id": 259,
     "web_name": "Diop",
@@ -598,5 +548,55 @@
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
+  },
+  "627": {
+    "player_id": 627,
+    "web_name": "Barcola",
+    "team_short": "LIV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
+  },
+  "401": {
+    "player_id": 401,
+    "web_name": "Marmoush",
+    "team_short": "TOT",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "455": {
+    "player_id": 455,
+    "web_name": "Tonali",
+    "team_short": "TOT",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "512": {
+    "player_id": 512,
+    "web_name": "Kudus",
+    "team_short": "TOT",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "514": {
+    "player_id": 514,
+    "web_name": "Tel",
+    "team_short": "TOT",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
   }
 }

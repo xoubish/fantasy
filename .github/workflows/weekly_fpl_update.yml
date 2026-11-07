@@ -29,6 +29,9 @@ jobs:
       - name: Check data integrity, transfer rules and evaluation splits
         run: python3 -m unittest -v test_regressions
 
+      - name: Restore completed-season training archive
+        run: python3 historical_data.py sync
+
       - name: Sync last week's match logs, retrain the multi-head model & rebuild index.html
         run: python3 fpl_assistant.py weekly-update
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures
 import csv
 import io
+import gzip
 import json
 import sqlite3
 import time
@@ -179,6 +180,7 @@ def fetch_player_summaries_concurrent(
         return str(pid), {
             "history": data.get("history", []),
             "history_past": data.get("history_past", []),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
 
     failed = []
@@ -259,7 +261,28 @@ def sync_live_fpl_data(
         except Exception as exc:
             status["errors"].append(f"Element summaries fetch warning: {exc}")
 
+    if status["live_fpl_synced"]:
+        status["snapshot"] = str(archive_live_snapshot())
     return status
+
+
+def archive_live_snapshot() -> Path:
+    """Preserve timestamped public API inputs for future deadline-aware evaluation.
+
+    Per-player fetched_at distinguishes refreshed histories from a failed-request
+    fallback. These files are evidence for future evaluation, not training inputs.
+    """
+    stamp = datetime.now(timezone.utc)
+    directory = DATA_DIR / "snapshots"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (stamp.strftime("%Y%m%dT%H%M%S%fZ") + ".json.gz")
+    payload = {"observed_at": stamp.isoformat(),
+               "bootstrap": json.loads(CACHE_BOOTSTRAP.read_text()),
+               "fixtures": json.loads(CACHE_FIXTURES.read_text()),
+               "player_summaries": json.loads(CACHE_SUMMARIES.read_text()) if CACHE_SUMMARIES.exists() else {}}
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    return path
 
 
 def compute_team_strengths(
@@ -313,8 +336,8 @@ def compute_team_strengths(
         n = max(0.5, gp_w[tid])
         gf_pg = gf_w[tid] / n  # time-weighted goals scored per game
         ga_pg = ga_w[tid] / n  # time-weighted goals conceded per game
-        str_h = int(t.get("strength_overall_home", 3) or 3)
-        str_a = int(t.get("strength_overall_away", 3) or 3)
+        # Match the historical feature builder: no end-of-season strength information.
+        str_h = str_a = 3
 
         # Higher attack rating = team scores more goals recently & has higher overall strength
         att_base = 1040 + int((gf_pg - 0.65) * 140)

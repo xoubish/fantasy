@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FPL AI Optimizer — Minimal, Sleek Web App Generator (web_app.py)
+Touchline — Fantasy Football Field Notes (web_app.py)
 
 Focused strictly on the Best £100m Squad of the Week before games start,
 with 1-click Variations and a clean Player Inspector when you click a card.
@@ -135,6 +135,7 @@ def build_web_payload() -> Dict[str, Any]:
         "nnMetrics": nn_net.metrics,
         "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
+        "historicalBacktest": _load_historical_summary(),
         "meta": _gameweek_meta(all_players),
     }
 
@@ -170,6 +171,16 @@ def _build_my_squad_plan(all_players, all_preds) -> Optional[Dict[str, Any]]:
                 "objective": view.plan.objective, "totalHits": view.plan.total_hits, "weeks": weeks}
     except Exception as exc:  # the page must still build without a valid my_squad.json
         return {"error": str(exc)}
+
+
+def _load_historical_summary() -> List[Dict[str, Any]]:
+    path = ROOT_DIR / "data" / "historical_backtest_results.json"
+    if not path.exists():
+        return []
+    result = json.loads(path.read_text(encoding="utf-8"))
+    return [{"season": row["season"], "weeks": len(row["weeks"]), "totals": row["totals"],
+             "margin": row["rolling_margin_mean"], "interval": row["rolling_margin_block_bootstrap_95pct"]}
+            for row in result["seasons"]]
 
 
 def _load_backtest_summary() -> Optional[Dict[str, Any]]:
@@ -208,7 +219,7 @@ def _gameweek_meta(all_players) -> Dict[str, Any]:
         deadline = ev.get("deadline_time", "") or ""
     except Exception:
         pass
-    return {"gw": gw, "deadline": deadline, "trainedThroughGw": latest_finished_gw()}
+    return {"gw": gw, "deadline": deadline, "formThroughGw": latest_finished_gw()}
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -216,289 +227,333 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FPL AI Optimizer</title>
+  <title>Touchline — Fantasy football field notes</title>
+  <meta name="description" content="Your fantasy football field notes: six squad ideas, player projections, transfer plans, and an honest look at the results." />
+  <meta name="theme-color" content="#f4f0e7" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0f0a16;
-      --surface: #171022;
-      --surface-2: #1f1630;
-      --line: rgba(255, 255, 255, 0.09);
-      --line-strong: rgba(255, 255, 255, 0.16);
-      --text: #f3eef9;
-      --text-2: #c9bfd8;
-      --muted: #8f86a3;
-      --accent: #37f0a0;
-      --accent-ink: #0b1a12;
-      --cap: #ff3d8a;
-      --turf-a: #146a3c;
-      --turf-b: #187a46;
-      --s-model: #2fae72;
-      --s-avg: #5f78e3;
-      --s-naive: #b8862a;
-      --radius: 16px;
-      --shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+      --bg: #f4f0e7; --surface: #fbf8f1; --surface-2: #eae5d9;
+      --text: #292d27; --text-2: #4d5349; --muted: #65695e;
+      --line: #d6d3c6; --line-strong: #b7bbab;
+      --accent: #6f293f; --cap: #6f293f; --lime: #e5e6a3;
+      --turf-a: #294f43; --turf-b: #2d5447;
+      --s-model: #385e4c; --s-avg: #783b50; --s-naive: #a57d3a;
+      --serif: 'Source Serif 4', Georgia, serif;
+      --sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background: var(--bg);
-      background-image:
-        radial-gradient(900px 500px at 10% -10%, rgba(55, 240, 160, 0.10), transparent 60%),
-        radial-gradient(800px 500px at 95% 0%, rgba(95, 120, 227, 0.12), transparent 60%);
-      color: var(--text);
-      min-height: 100vh;
-      padding: 22px 16px 56px;
-      line-height: 1.45;
-      -webkit-font-smoothing: antialiased;
-    }
-    .container { max-width: 1180px; margin: 0 auto; min-width: 0; }
-    .tabs, .topbar { min-width: 0; }
-    h1, h2, h3 { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -0.01em; }
-
-    /* ---------- top bar ---------- */
-    .topbar {
-      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 20px;
-      padding: 6px 4px 18px;
-    }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand-mark {
-      width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
-      background: linear-gradient(145deg, var(--accent), #5f78e3); color: #0b0812; font-weight: 800; font-size: 0.95rem;
-      font-family: 'Space Grotesk', sans-serif;
-    }
-    .brand h1 { font-size: 1.3rem; font-weight: 700; line-height: 1.1; }
-    .brand .sub { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
-    .gw-chip {
-      display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
-      background: var(--surface); border: 1px solid var(--line-strong); font-size: 0.82rem; color: var(--text-2);
-    }
-    .gw-chip strong { color: var(--text); font-weight: 700; }
-    .gw-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(55, 240, 160, 0.18); }
-
-    /* ---------- variation tabs ---------- */
-    .tabs {
-      display: flex; gap: 6px; flex-wrap: wrap; padding: 6px; border-radius: 14px;
-      background: var(--surface); border: 1px solid var(--line); margin-bottom: 16px;
-    }
-    .tab {
-      flex: 1 1 150px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
-      padding: 10px 12px; border-radius: 10px; text-align: left; transition: background 0.15s, color 0.15s;
-      font-family: inherit;
-    }
-    .tab:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-2); }
-    .tab.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
-    .tab .t-name { display: block; font-weight: 700; font-size: 0.84rem; }
-    .tab .t-meta { display: block; font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
-    .tab.active .t-meta { color: var(--accent); }
-
-    /* ---------- KPI strip ---------- */
-    .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .kpi {
-      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
-      min-width: 0;
-    }
-    .kpi .k-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
-    .kpi .k-value { font-family: 'Space Grotesk', sans-serif; font-size: 1.6rem; font-weight: 700; line-height: 1.15; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .kpi .k-value.accent { color: var(--accent); }
-    .kpi .k-sub { font-size: 0.76rem; color: var(--text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    /* ---------- main grid ---------- */
-    .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; margin-bottom: 16px; }
-
-    .pitch-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); }
-    .pitch {
-      position: relative; border-radius: 12px; overflow: hidden;
-      background:
-        radial-gradient(circle at 50% 0%, rgba(255,255,255,0.07) 0%, transparent 45%),
-        repeating-linear-gradient(to bottom, var(--turf-a) 0 72px, var(--turf-b) 72px 144px);
-      padding: 22px 8px 24px;
-    }
-    .pitch::before, .pitch::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); border: 2px solid rgba(255,255,255,0.28); pointer-events: none; }
-    .pitch::before { top: -2px; width: 42%; height: 86px; border-top: 0; border-radius: 0 0 4px 4px; }
-    .pitch::after { bottom: 46px; width: 118px; height: 118px; border-radius: 50%; }
-    .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 6px; margin-bottom: 18px; position: relative; z-index: 2; }
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    button, a, summary { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    a { color: inherit; text-underline-offset: 4px; }
+    button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+    .skip-link { position: absolute; top: -80px; left: 20px; background: var(--surface); padding: 12px; z-index: 20; }
+    .skip-link:focus { top: 12px; }
+    .container { max-width: 1280px; margin: 0 auto; padding: 0 40px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px 0 20px; border-bottom: 1px solid var(--text); }
+    .brand { display: flex; gap: 12px; align-items: center; text-decoration: none; }
+    .brand-mark { width: 32px; height: 40px; color: var(--accent); }
+    .wordmark { font: 600 35px/1 var(--serif); letter-spacing: -1.8px; color: var(--accent); }
+    .brand-caption, .eyebrow, .section-label, .k-label, .bench-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.7px; font-weight: 600; }
+    .brand-caption { margin-top: 7px; color: var(--muted); font-size: 9px; letter-spacing: 1.2px; }
+    .top-nav { display: flex; gap: 28px; font-size: 12px; }
+    .top-nav a { text-decoration: none; border-bottom: 1px solid transparent; padding: 8px 0; }
+    .top-nav a:hover { border-color: var(--accent); color: var(--accent); }
+    .edition { font-size: 11px; color: var(--muted); }
+    .intro { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 32px 0; }
+    .eyebrow { color: var(--accent); margin-bottom: 9px; }
+    h1 { font: 500 clamp(38px, 4.5vw, 60px)/1.08 var(--serif); letter-spacing: -2px; }
+    h1 em { font-weight: 400; color: var(--accent); }
+    .intro-copy { color: var(--text-2); font-size: 13px; margin-top: 12px; max-width: 470px; }
+    .fixture-ticket { display: flex; align-items: center; gap: 22px; padding: 15px 24px; border: 1px solid var(--line-strong); background: var(--lime); transform: rotate(-1.5deg); flex-shrink: 0; }
+    .ticket-number { padding-right: 22px; border-right: 1px dashed #969c70; text-align: center; }
+    .ticket-number span { display: block; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
+    .ticket-number strong { display: block; font: 500 46px/1.05 var(--serif); }
+    .ticket-info { max-width: 180px; font-size: 12px; }
+    .ticket-info .eyebrow { font-size: 9px; color: #4b573a; margin-bottom: 4px; }
+    .ticket-info time { display: block; font-weight: 600; }
+    .ticket-info small { display: block; margin-top: 5px; font-size: 10px; color: #525b43; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--text); }
+    .section-label { display: flex; align-items: center; gap: 14px; }
+    .section-number { font: italic 18px var(--serif); color: var(--accent); letter-spacing: 0; }
+    .section-hint { font-size: 11px; color: var(--muted); }
+    .tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); margin-bottom: 24px; }
+    .tab { position: relative; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer; padding: 13px 14px; text-align: left; transition: background .15s; min-width: 0; }
+    .tab:last-child { border-right: 0; }
+    .tab:hover { background: var(--surface-2); }
+    .tab.active { background: var(--accent); color: var(--surface); }
+    .t-number { font: italic 12px var(--serif); opacity: .7; display: block; margin-bottom: 6px; }
+    .t-name { display: block; font-weight: 600; font-size: 12px; }
+    .t-meta { display: block; font-size: 10px; margin-top: 3px; opacity: .85; }
+    .kpis { display: grid; grid-template-columns: 1.05fr 1.2fr .8fr 1fr; margin-bottom: 25px; }
+    .kpi { min-width: 0; padding: 0 24px; border-left: 1px solid var(--line); }
+    .kpi:first-child { padding-left: 0; border-left: 0; }
+    .k-label { color: var(--muted); font-size: 9px; letter-spacing: 1.1px; }
+    .k-value { font: 500 34px/1.25 var(--serif); letter-spacing: -1px; margin: 3px 0; overflow-wrap: anywhere; }
+    .k-value.accent { color: var(--accent); }
+    .k-sub { font-size: 11px; color: var(--muted); }
+    .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 28px; align-items: start; }
+    .pitch-card { background: var(--turf-a); padding: 16px; color: var(--surface); }
+    .pitch-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 1px 4px 15px; }
+    .pitch-heading h2 { font: 500 23px var(--serif); }
+    .pitch-heading span { font-size: 10px; color: #d1dbce; }
+    .pitch { position: relative; overflow: hidden; background: repeating-linear-gradient(to bottom, var(--turf-a) 0 78px, var(--turf-b) 78px 156px); padding: 18px 6px; border: 1px solid #708877; }
+    .pitch-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; color: #8da08c; opacity: .55; }
+    .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 6px; margin-bottom: 22px; position: relative; z-index: 2; }
     .pitch-row:last-child { margin-bottom: 0; }
-
-    .player-card {
-      width: 112px; border-radius: 12px; text-align: center; position: relative; cursor: pointer; user-select: none;
-      background: rgba(12, 32, 22, 0.92); border: 1.5px solid rgba(255, 255, 255, 0.22); padding-top: 10px;
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
-    }
-    .player-card:hover { transform: translateY(-3px); border-color: rgba(255, 255, 255, 0.55); }
-    .player-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(55, 240, 160, 0.25), 0 8px 20px rgba(0, 0, 0, 0.5); }
-    .player-card.out { opacity: 0.55; }
-    .price-tag { position: absolute; top: 6px; left: 7px; font-size: 0.64rem; font-weight: 600; color: rgba(255,255,255,0.75); font-variant-numeric: tabular-nums; }
-    .xp-tag {
-      position: absolute; top: 5px; right: 6px; font-size: 0.68rem; font-weight: 800; padding: 2px 6px; border-radius: 6px;
-      background: rgba(255, 255, 255, 0.92); color: #0b1a12; font-variant-numeric: tabular-nums;
-    }
-    .xp-tag.high { background: var(--accent); }
-    .cap-badge {
-      position: absolute; top: 27px; left: 7px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
-      background: var(--cap); color: #fff; font-size: 0.64rem; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-    }
-    .cap-badge.vice { background: rgba(255, 255, 255, 0.25); }
-    .jersey-svg { width: 50px; height: 44px; margin: 10px auto 6px; display: block; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.4)); }
-    .p-name { background: #fff; color: #140a1c; font-weight: 700; font-size: 0.74rem; padding: 4px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .p-fix { background: #e9e4f1; color: #3a2347; font-weight: 600; font-size: 0.66rem; padding: 3px 4px; border-radius: 0 0 10px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    .bench { margin-top: 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 10px 8px 10px; }
-    .bench-title { text-align: center; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
-    .sub-lbl { font-size: 0.62rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-align: center; }
-
-    /* ---------- side panels ---------- */
-    .side { display: flex; flex-direction: column; gap: 14px; }
-    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; min-width: 0; }
-    .panel h3 { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 12px; font-weight: 600; }
-    .panel p { font-size: 0.82rem; color: var(--text-2); }
-    .stat-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 0.82rem; }
-    .stat-row:last-child { border-bottom: 0; }
+    .player-card { display: block; flex: 0 1 105px; width: 105px; min-width: 0; padding: 10px 0 0; border-radius: 3px; position: relative; cursor: pointer; text-align: center; background: #203e34; border: 1px solid #78907d; color: var(--surface); transition: transform .15s, outline-color .15s; }
+    .player-card:hover { transform: translateY(-3px); }
+    .player-card.selected { outline: 2px solid var(--lime); outline-offset: 3px; }
+    .player-card:focus-visible { outline: 3px solid white; outline-offset: 4px; }
+    .price-tag { position: absolute; top: 6px; left: 6px; font-size: 9px; color: #d5decc; font-variant-numeric: tabular-nums; }
+    .xp-tag { position: absolute; top: 5px; right: 5px; font-size: 10px; font-weight: 700; padding: 1px 4px; border-radius: 2px; background: #f4f0e7; color: #243d30; font-variant-numeric: tabular-nums; }
+    .xp-tag.high { background: var(--lime); }
+    .cap-badge { position: absolute; top: 28px; left: 6px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--cap); color: white; font-size: 10px; font-weight: 700; border: 1px solid #e6c9ca; }
+    .cap-badge.vice { background: #dfdccb; color: #3d4a3e; border-color: #dfdccb; }
+    .jersey-svg { width: 50px; height: 44px; margin: 11px auto 7px; display: block; }
+    .p-name { display: block; background: var(--surface); color: #292d27; font-weight: 700; font-size: 11px; padding: 4px 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .p-fix { display: block; background: #e9e7d9; color: #465044; font-size: 9px; padding: 3px 2px; border-radius: 0 0 2px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bench { margin-top: 15px; padding: 13px 6px 4px; border-top: 1px solid #708877; }
+    .bench-title { font-size: 9px; text-align: center; color: #d1dbce; margin-bottom: 10px; letter-spacing: 1.3px; }
+    .sub-lbl { color: #d1dbce; font-size: 9px; text-align: center; margin-bottom: 5px; }
+    .side { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+    .panel { min-width: 0; }
+    .panel h3 { font: 500 25px/1.2 var(--serif); letter-spacing: -.5px; margin-bottom: 16px; }
+    .panel-kicker { display: block; color: var(--muted); text-transform: uppercase; letter-spacing: 1.4px; font: 600 9px var(--sans); margin-bottom: 7px; }
+    .scout-panel { background: var(--surface); padding: 23px; border: 1px solid var(--line); border-top: 3px solid var(--accent); }
+    .player-profile { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; }
+    .profile-kit { width: 52px; flex-shrink: 0; }
+    .profile-copy { min-width: 0; }
+    .profile-name { font: 600 23px/1.15 var(--serif); letter-spacing: -.5px; overflow-wrap: anywhere; }
+    .profile-meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .stat-row { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 11px; }
     .stat-row span { color: var(--muted); }
-    .stat-row strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
-    .note { margin-top: 12px; padding: 10px 12px; background: rgba(55, 240, 160, 0.08); border-left: 3px solid var(--accent); border-radius: 6px; font-size: 0.8rem; color: var(--text-2); }
-    .verdict { font-size: 0.84rem; color: var(--text-2); }
-    .verdict strong { color: var(--text); }
-
-    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 600; background: rgba(255,255,255,0.08); color: var(--text-2); }
-    .pill.ok { background: rgba(47, 174, 114, 0.18); color: #7ee0b4; }
-    .pill.warn { background: rgba(184, 134, 42, 0.2); color: #f0c56a; }
-    .pill.bad { background: rgba(255, 61, 138, 0.18); color: #ff8fbd; }
-
-    /* ---------- lower grid ---------- */
-    .lower { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    .lower .panel { height: 100%; }
-
-    .plan-week { padding: 10px 0; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--text-2); }
-    .plan-week:first-of-type { border-top: 0; padding-top: 0; }
-    .plan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-    .plan-head strong { color: var(--text); font-size: 0.86rem; }
-    .plan-move { display: flex; gap: 8px; align-items: baseline; }
+    .stat-row strong { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; max-width: 60%; }
+    .note { margin-top: 15px; font-size: 11px; line-height: 1.65; color: var(--text-2); border-left: 2px solid var(--line-strong); padding-left: 12px; }
+    .verdict-panel { padding: 0 4px; }
+    .verdict-panel h3 { font-style: italic; margin-bottom: 12px; }
+    .panel p, .verdict { font-size: 12px; line-height: 1.7; color: var(--text-2); }
+    .verdict p + p { margin-top: 10px; }
+    details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+    summary { font-size: 11px; font-weight: 600; cursor: pointer; color: var(--accent); }
+    .pill { display: inline-block; padding: 2px 6px; font-size: 9px; font-weight: 600; background: var(--surface-2); color: var(--text-2); border-radius: 2px; }
+    .pill.ok { background: #e2ebdf; color: #36543a; }
+    .pill.warn { background: #f0e3c7; color: #76551f; }
+    .pill.bad, .pill.captain { background: #eddce1; color: var(--accent); }
+    .moves-section, .evidence-section { margin-top: 36px; }
+    .plan-summary { display: flex; justify-content: space-between; gap: 20px; padding: 6px 0 18px; }
+    .plan-summary h3 { font: 500 27px var(--serif); }
+    .plan-summary p { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .plan-value { text-align: right; }
+    .plan-value strong { display: block; font: 500 28px var(--serif); color: var(--accent); }
+    .plan-value span { font-size: 10px; color: var(--muted); }
+    .plan-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); border: 1px solid var(--line); background: var(--surface); }
+    .plan-week { padding: 18px; border-right: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
+    .plan-week:last-child { border-right: 0; }
+    .plan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .plan-head strong { font: 500 22px var(--serif); color: var(--text); }
+    .plan-move { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 5px 0; }
     .plan-move .arrow { color: var(--muted); }
     .plan-move .in { color: var(--accent); font-weight: 600; }
-    .plan-foot { margin-top: 10px; font-size: 0.74rem; color: var(--muted); }
-
-    .chart { width: 100%; height: auto; display: block; margin-top: 6px; }
-    .chart text { font-family: 'Inter', sans-serif; fill: var(--muted); font-size: 10.5px; }
-    .chart .lbl { fill: var(--text-2); font-weight: 600; }
-    .chart .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
-    .chart .axis { stroke: rgba(255,255,255,0.22); stroke-width: 1; }
-    .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 0.74rem; color: var(--text-2); margin-top: 8px; }
-    .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
-    .tooltip {
-      position: fixed; pointer-events: none; z-index: 50; padding: 8px 10px; border-radius: 8px; font-size: 0.76rem;
-      background: #0b0712; border: 1px solid var(--line-strong); color: var(--text); box-shadow: var(--shadow); display: none; white-space: nowrap;
-    }
-    .tooltip b { color: var(--accent); }
-    .metric-bars { margin-top: 4px; }
-    .metric { padding: 8px 0; border-top: 1px solid var(--line); font-size: 0.78rem; }
-    .metric:first-child { border-top: 0; }
-    .metric .m-head { display: flex; justify-content: space-between; color: var(--text-2); margin-bottom: 5px; }
-    .metric .m-head b { color: var(--text); font-weight: 600; }
-    .bar-pair { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; align-items: center; font-size: 0.72rem; color: var(--muted); margin: 3px 0; }
-    .bar-pair .track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.07); overflow: hidden; }
-    .bar-pair .fill { height: 100%; border-radius: 4px; }
-    .bar-pair .val { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
-    .summary-line { display: flex; justify-content: space-between; gap: 10px; font-size: 0.78rem; color: var(--text-2); padding: 6px 0; border-top: 1px solid var(--line); }
+    .plan-foot { margin-top: 12px; font-size: 10px; color: var(--muted); max-width: 800px; }
+    .lower { display: grid; grid-template-columns: .85fr 1.15fr; gap: 36px; }
+    .lower .panel + .panel { border-left: 1px solid var(--line); padding-left: 36px; }
+    .evidence-intro { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 5px 0 25px; }
+    .evidence-intro h2 { font: 500 32px var(--serif); letter-spacing: -.7px; }
+    .evidence-intro p { font-size: 12px; color: var(--muted); }
+    .chart { width: 100%; height: auto; display: block; margin-top: 18px; }
+    .chart text { font-family: var(--sans); fill: var(--muted); font-size: 10.5px; }
+    .chart .lbl { fill: var(--text); font-weight: 600; }
+    .chart .grid { stroke: var(--line); stroke-width: 1; }
+    .chart .axis { stroke: var(--line-strong); stroke-width: 1; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 10px; color: var(--text-2); margin-top: 10px; }
+    .legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--c); }
+    .tooltip { position: fixed; pointer-events: none; z-index: 50; padding: 9px 12px; font-size: 11px; background: var(--text); color: var(--surface); display: none; max-width: calc(100vw - 24px); }
+    .tooltip b { color: var(--lime); }
+    .metric-bars { margin-top: 16px; }
+    .metric { padding: 13px 0; border-top: 1px solid var(--line); font-size: 11px; }
+    .m-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .m-head b { font-weight: 600; }
+    .bar-pair { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; align-items: center; font-size: 10px; color: var(--muted); margin: 5px 0; }
+    .track { height: 6px; background: var(--surface-2); overflow: hidden; }
+    .fill { height: 100%; }
+    .val { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+    .summary-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; font-size: 11px; color: var(--text-2); padding: 9px 0; border-top: 1px solid var(--line); }
     .summary-line:first-child { border-top: 0; }
-    .summary-line b { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .caveat { font-size: 0.74rem; color: var(--muted); margin-top: 10px; }
-    footer { margin-top: 20px; font-size: 0.74rem; color: var(--muted); text-align: center; }
-
-    @media (max-width: 980px) {
-      .main-grid { grid-template-columns: 1fr; }
-      .lower { grid-template-columns: 1fr; }
-      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-    @media (max-width: 560px) {
-      body { padding: 14px 12px 40px; }
-      .pitch-card { padding: 8px; }
-      .pitch-row { gap: 3px; }
-      .player-card { width: calc((100vw - 64px) / 5 - 3px); max-width: 86px; min-width: 56px; border-radius: 9px; padding-top: 8px; }
-      .price-tag { display: none; }
-      .xp-tag { font-size: 0.6rem; padding: 1px 4px; top: 4px; right: 4px; }
-      .cap-badge { width: 16px; height: 16px; font-size: 0.56rem; top: 4px; left: 4px; }
-      .jersey-svg { width: 34px; height: 30px; margin: 8px auto 4px; }
-      .p-name { font-size: 0.6rem; padding: 3px 3px; }
-      .p-fix { font-size: 0.56rem; padding: 2px 2px; border-radius: 0 0 7px 7px; }
+    .summary-line b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .caveat { font-size: 10px; line-height: 1.7; color: var(--muted); margin-top: 10px; }
+    .historical-heading { font: 500 21px var(--serif); margin-top: 24px; margin-bottom: 8px; }
+    .site-footer { display: flex; justify-content: space-between; gap: 40px; border-top: 1px solid var(--text); margin-top: 40px; padding: 24px 0 32px; }
+    .footer-brand { font: 600 22px var(--serif); color: var(--accent); white-space: nowrap; }
+    #footer { max-width: 720px; font-size: 10px; line-height: 1.7; color: var(--muted); }
+    @media (max-width: 1050px) {
+      .container { padding: 0 24px; }
+      .main-grid { grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; }
+      .scout-panel { padding: 18px; }
+      .tab { padding: 12px 10px; }
+      .kpi { padding: 0 16px; }
+      .k-value { font-size: 29px; }
       .p-team { display: none; }
-      .bench .pitch-row { flex-wrap: wrap; row-gap: 8px; }
-      .pitch { padding: 16px 4px 18px; }
-      .pitch::before { width: 55%; height: 60px; }
-      .pitch::after { width: 80px; height: 80px; bottom: 34px; }
-      .kpi .k-value { font-size: 1.3rem; }
+      .price-tag { display: none; }
+      .plan-weeks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .plan-week:nth-child(2n) { border-right: 0; }
+      .plan-week:nth-child(n+3) { border-top: 1px solid var(--line); }
     }
+    @media (max-width: 800px) {
+      .edition { display: none; }
+      .intro { gap: 20px; }
+      .fixture-ticket { padding: 12px 15px; gap: 14px; }
+      .ticket-number { padding-right: 14px; }
+      .ticket-info { max-width: 140px; }
+      .main-grid { grid-template-columns: minmax(0, 1fr); }
+      .side { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; }
+      .verdict-panel { padding-top: 12px; }
+      .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .tab:nth-child(3) { border-right: 0; }
+      .tab:nth-child(n+4) { border-top: 1px solid var(--line); }
+      .t-number { display: inline; margin-right: 6px; }
+      .t-name { display: inline; }
+      .lower { gap: 24px; }
+      .lower .panel + .panel { padding-left: 24px; }
+      .price-tag, .p-team { display: block; }
+      .p-team { display: inline; }
+    }
+    @media (max-width: 600px) {
+      .container { padding: 0 16px; }
+      .topbar { padding: 20px 0 16px; gap: 15px; }
+      .wordmark { font-size: 30px; }
+      .brand-mark { width: 25px; height: 34px; }
+      .brand { gap: 8px; }
+      .brand-caption { font-size: 8px; letter-spacing: .7px; }
+      .top-nav { gap: 14px; font-size: 10px; }
+      .top-nav a:first-child { display: none; }
+      .intro { display: block; padding: 26px 0 24px; }
+      h1 { font-size: 43px; letter-spacing: -1.7px; }
+      .intro-copy { font-size: 12px; max-width: 320px; }
+      .fixture-ticket { margin-top: 22px; padding: 10px 15px; transform: none; width: 100%; gap: 16px; }
+      .ticket-number { display: flex; align-items: center; gap: 8px; padding-right: 16px; }
+      .ticket-number span { font-size: 8px; max-width: 45px; }
+      .ticket-number strong { font-size: 34px; }
+      .ticket-info { max-width: none; }
+      .ticket-info time { font-size: 11px; }
+      .ticket-info small { display: none; }
+      .ticket-info .eyebrow { margin-bottom: 2px; font-size: 8px; }
+      .section-label { font-size: 9px; gap: 9px; letter-spacing: 1.3px; }
+      .section-hint { font-size: 9px; }
+      .tabs { margin-bottom: 20px; }
+      .tab { padding: 12px 9px; }
+      .t-name { font-size: 11px; }
+      .t-number { font-size: 10px; }
+      .t-meta { font-size: 9px; }
+      .kpis { grid-template-columns: 1fr 1fr; gap: 16px 0; }
+      .kpi { padding: 0 14px; }
+      .kpi:nth-child(3) { border-left: 0; padding-left: 0; }
+      .k-label { font-size: 8px; }
+      .k-value { font-size: 30px; }
+      .k-sub { font-size: 10px; }
+      .pitch-card { padding: 11px 9px; }
+      .pitch-heading { padding: 2px 3px 12px; }
+      .pitch-heading h2 { font-size: 21px; }
+      .pitch-heading span { font-size: 9px; }
+      .pitch { padding: 16px 4px; }
+      .pitch-row { gap: 5px; margin-bottom: 25px; }
+      .player-card { width: min(82px, calc((100vw - 84px) / 5)); flex-basis: min(82px, calc((100vw - 84px) / 5)); padding-top: 8px; }
+      .price-tag, .p-team { display: none; }
+      .xp-tag { font-size: 9px; padding: 0 3px; top: 4px; right: 3px; }
+      .cap-badge { width: 14px; height: 14px; font-size: 8px; top: 4px; left: 3px; }
+      .jersey-svg { width: 34px; height: 30px; margin: 12px auto 6px; }
+      .p-name { font-size: 9px; padding: 4px 2px 2px; }
+      .p-fix { font-size: 8px; padding: 3px 1px; }
+      .profile-kit .jersey-svg { width: 50px; height: 44px; }
+      .bench { padding: 12px 2px 4px; }
+      .side { display: block; }
+      .verdict-panel { padding: 24px 4px 0; }
+      .scout-panel { padding: 20px; }
+      .stat-row { font-size: 12px; }
+      .lower { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+      .lower .panel + .panel { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+      .plan-week { padding: 14px 12px; font-size: 11px; }
+      .plan-head { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .plan-summary h3 { font-size: 24px; }
+      .evidence-intro h2 { font-size: 29px; }
+      .site-footer { gap: 14px; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; } }
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#selection">Skip to the squad</a>
   <div class="container">
-    <div class="topbar">
-      <div class="brand">
-        <div class="brand-mark">xP</div>
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Touchline home">
+        <svg class="brand-mark" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M2 2h28v25L16 38 2 27Z" stroke="currentColor" stroke-width="1.5"/><path d="M2 16h28M16 2v36" stroke="currentColor" stroke-width="1"/><circle cx="16" cy="16" r="7" fill="var(--bg)" stroke="currentColor"/><path d="m16 11 4 3-1.5 4.5h-5L12 14Z" fill="currentColor"/></svg>
+        <div><div class="wordmark">Touchline.</div><div class="brand-caption">Fantasy football field notes</div></div>
+      </a>
+      <nav class="top-nav" aria-label="Page sections"><a href="#selection">The lineup</a><a href="#moves">Your moves</a><a href="#evidence">The evidence</a></nav>
+      <span class="edition" id="edition">The gameweek edition</span>
+    </header>
+
+    <main>
+      <div class="intro">
         <div>
-          <h1>FPL AI Optimizer</h1>
-          <div class="sub" id="brand-sub">Multi-head model · squad optimization · walk-forward backtest</div>
+          <p class="eyebrow">A head start for your gameweek</p>
+          <h1>Your next <em>eleven.</em></h1>
+          <p class="intro-copy">Six ways to set up. The numbers behind every pick.<br>A little homework before the whistle.</p>
         </div>
-      </div>
-      <div class="gw-chip"><span class="dot"></span><span id="gw-chip-text">Gameweek</span></div>
-    </div>
-
-    <div class="tabs" id="tabs"></div>
-
-    <div class="kpis">
-      <div class="kpi"><div class="k-label">Projected XI points</div><div class="k-value accent" id="kpi-xp">–</div><div class="k-sub" id="kpi-xp-sub">incl. captain, floor–ceiling</div></div>
-      <div class="kpi"><div class="k-label">Captain</div><div class="k-value" id="kpi-cap">–</div><div class="k-sub" id="kpi-cap-sub"></div></div>
-      <div class="kpi"><div class="k-label">Formation</div><div class="k-value" id="kpi-form">–</div><div class="k-sub" id="kpi-form-sub"></div></div>
-      <div class="kpi"><div class="k-label">Squad cost</div><div class="k-value" id="kpi-cost">–</div><div class="k-sub" id="kpi-cost-sub"></div></div>
-    </div>
-
-    <div class="main-grid">
-      <div class="pitch-card">
-        <div class="pitch">
-          <div class="pitch-row" id="row-gkp"></div>
-          <div class="pitch-row" id="row-def"></div>
-          <div class="pitch-row" id="row-mid"></div>
-          <div class="pitch-row" id="row-fwd"></div>
-        </div>
-        <div class="bench">
-          <div class="bench-title">Bench · in auto-sub order</div>
-          <div class="pitch-row" id="row-bench"></div>
+        <div class="fixture-ticket" aria-label="Upcoming gameweek deadline">
+          <div class="ticket-number"><span>Game<br>week</span><strong id="gw-number">–</strong></div>
+          <div class="ticket-info"><p class="eyebrow">The team sheet closes</p><time id="gw-deadline">Deadline to be confirmed</time><small id="gw-form"></small></div>
         </div>
       </div>
 
-      <div class="side">
-        <div class="panel">
-          <h3>Player</h3>
-          <div id="player-inspector"></div>
+      <section id="selection" aria-labelledby="selection-label">
+        <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> The selection</h2><span class="section-hint">Six approaches · £100m to work with</span></div>
+        <div class="tabs" id="tabs" role="group" aria-label="Squad approaches"></div>
+        <div id="squad-view">
+          <div class="kpis" aria-live="polite" aria-atomic="true">
+            <div class="kpi"><div class="k-label">Projected XI points</div><div class="k-value accent" id="kpi-xp">–</div><div class="k-sub" id="kpi-xp-sub"></div></div>
+            <div class="kpi"><div class="k-label">The armband</div><div class="k-value" id="kpi-cap">–</div><div class="k-sub" id="kpi-cap-sub"></div></div>
+            <div class="kpi"><div class="k-label">The shape</div><div class="k-value" id="kpi-form">–</div><div class="k-sub" id="kpi-form-sub"></div></div>
+            <div class="kpi"><div class="k-label">Squad spend</div><div class="k-value" id="kpi-cost">–</div><div class="k-sub" id="kpi-cost-sub"></div></div>
+          </div>
+          <div class="main-grid">
+            <div class="pitch-card">
+              <div class="pitch-heading"><h2 id="squad-title">The starting XI</h2><span>Tap a shirt for the scouting notes ↗</span></div>
+              <div class="pitch" role="group" aria-label="Starting eleven">
+                <svg class="pitch-lines" viewBox="0 0 600 540" preserveAspectRatio="none" fill="none" aria-hidden="true"><path d="M12 12H588V528H12ZM12 270H588M190 12V88H410V12M250 12V42H350V12M190 528V452H410V528M250 528V498H350V528" stroke="currentColor"/><circle cx="300" cy="270" r="60" stroke="currentColor"/><circle cx="300" cy="270" r="3" fill="currentColor"/><path d="M263 88Q300 130 337 88M263 452Q300 410 337 452" stroke="currentColor"/></svg>
+                <div class="pitch-row" id="row-gkp"></div><div class="pitch-row" id="row-def"></div><div class="pitch-row" id="row-mid"></div><div class="pitch-row" id="row-fwd"></div>
+              </div>
+              <div class="bench"><div class="bench-title">The bench · in auto-sub order</div><div class="pitch-row" id="row-bench" role="group" aria-label="Substitutes"></div></div>
+            </div>
+            <aside class="side" aria-label="Scouting notes">
+              <div class="panel scout-panel"><h3><span class="panel-kicker">Under the microscope</span>Player notes</h3><div id="player-inspector" aria-live="polite"></div></div>
+              <div class="panel verdict-panel"><h3>From the touchline</h3><div class="verdict" id="verdict"></div></div>
+            </aside>
+          </div>
         </div>
-        <div class="panel">
-          <h3>Why this squad</h3>
-          <div class="verdict" id="verdict"></div>
-        </div>
-      </div>
-    </div>
+      </section>
 
-    <div class="lower">
-      <div class="panel">
-        <h3>Your squad · transfer plan</h3>
+      <section class="moves-section" id="moves" aria-labelledby="moves-label">
+        <div class="section-head"><h2 class="section-label" id="moves-label"><span class="section-number">02</span> Your next moves</h2><span class="section-hint">A plan for the weeks ahead</span></div>
         <div id="plan-box"></div>
-      </div>
-      <div class="panel">
-        <h3>Model quality · chronological evaluation</h3>
-        <div id="model-box"></div>
-      </div>
-      <div class="panel">
-        <h3>Walk-forward backtest</h3>
-        <div id="backtest-box"></div>
-      </div>
-    </div>
+      </section>
 
-    <footer id="footer"></footer>
+      <section class="evidence-section" id="evidence" aria-labelledby="evidence-label">
+        <div class="section-head"><h2 class="section-label" id="evidence-label"><span class="section-number">03</span> The evidence</h2><span class="section-hint">Keep the predictions honest</span></div>
+        <div class="evidence-intro"><h2>Show your working.</h2><p id="brand-sub">Historical training. Out-of-sample results.</p></div>
+        <div class="lower">
+          <div class="panel"><h3><span class="panel-kicker">The individual picks</span>How well do we predict?</h3><div id="model-box"></div></div>
+          <div class="panel"><h3><span class="panel-kicker">The whole team</span>How did the strategy do?</h3><div id="backtest-box"></div></div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer"><span class="footer-brand">Touchline.</span><p id="footer"></p></footer>
   </div>
-  <div class="tooltip" id="tooltip"></div>
+  <div class="tooltip" id="tooltip" role="tooltip"></div>
 
   <script>
     const DATA = __PAYLOAD_JSON__;
@@ -526,7 +581,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       IPS: { body: "#3A64A3", sleeve: "#FFFFFF", stripe: null }
     };
     const TAB_NAMES = ["This week", "5-GW run", "No premiums", "Fortress", "Differentials", "Strong bench"];
-    const COLORS = { model: "#2fae72", avg: "#5f78e3", naive: "#b8862a" };
+    const COLORS = { model: "#385e4c", avg: "#783b50", naive: "#a57d3a" };
 
     let currentVarIdx = 0;
     let selectedPlayerId = null;
@@ -558,20 +613,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     DATA.variations.forEach(v => { registerPlayers(v.starters); registerPlayers(v.bench); });
 
     function createCardHtml(p, subLabel = null) {
-      const capHtml = p.isCaptain ? `<div class="cap-badge" title="Captain">C</div>` : (p.isVice ? `<div class="cap-badge vice" title="Vice-captain">V</div>` : "");
+      const capHtml = p.isCaptain ? `<span class="cap-badge" title="Captain">C</span>` : (p.isVice ? `<span class="cap-badge vice" title="Vice-captain">V</span>` : "");
       const xpClass = p.displayXp >= 6.0 ? "xp-tag high" : "xp-tag";
       const cls = ["player-card", p.id === selectedPlayerId ? "selected" : ""].join(" ");
       const wrapStart = subLabel ? `<div><div class="sub-lbl">${esc(subLabel)}</div>` : "";
       const wrapEnd = subLabel ? `</div>` : "";
       return `${wrapStart}
-        <div class="${cls}" id="pcard-${p.id}" onclick="inspectPlayer(${p.id})" title="${esc(p.fullName)}">
-          <div class="price-tag">£${p.price.toFixed(1)}m</div>
-          <div class="${xpClass}">${p.displayXp.toFixed(1)}</div>
+        <button type="button" class="${cls}" id="pcard-${p.id}" onclick="inspectPlayer(${p.id})" aria-pressed="${p.id === selectedPlayerId}" aria-controls="player-inspector" aria-label="${esc(p.fullName)}, ${esc(p.pos)}, ${p.displayXp.toFixed(1)} expected points${p.isCaptain ? ', captain, points doubled' : p.isVice ? ', vice-captain' : ''}" title="${esc(p.fullName)}">
+          <span class="price-tag">£${p.price.toFixed(1)}m</span>
+          <span class="${xpClass}">${p.displayXp.toFixed(1)}</span>
           ${capHtml}
           ${jerseySvg(p.team, p.pos === "GKP")}
-          <div class="p-name">${esc(p.name)}</div>
-          <div class="p-fix"><span class="p-team">${esc(p.team)} · </span>${esc(p.opponent)}</div>
-        </div>
+          <span class="p-name">${esc(p.name)}</span>
+          <span class="p-fix"><span class="p-team">${esc(p.team)} · </span>${esc(p.opponent)}</span>
+        </button>
       ${wrapEnd}`;
     }
 
@@ -579,14 +634,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const p = PLAYER_INDEX[id];
       if (!p) return;
       selectedPlayerId = id;
-      document.querySelectorAll(".player-card").forEach(el => el.classList.toggle("selected", el.id === `pcard-${id}`));
-      const role = p.isCaptain ? '<span class="pill" style="background:rgba(255,61,138,.2);color:#ff8fbd">Captain</span>' : (p.isVice ? '<span class="pill">Vice-captain</span>' : "");
+      document.querySelectorAll(".player-card").forEach(el => {
+        const selected = el.id === `pcard-${id}`;
+        el.classList.toggle("selected", selected);
+        el.setAttribute("aria-pressed", String(selected));
+      });
+      const role = p.isCaptain ? '<span class="pill captain">Captain</span>' : (p.isVice ? '<span class="pill">Vice-captain</span>' : "");
       document.getElementById("player-inspector").innerHTML = `
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-          <div style="width:46px;flex-shrink:0;">${jerseySvg(p.team, p.pos === "GKP")}</div>
-          <div style="min-width:0;">
-            <div style="font-size:1rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.fullName)}</div>
-            <div style="font-size:0.76rem;color:var(--muted);">${esc(p.teamName)} · ${esc(p.pos)} · £${p.price.toFixed(1)}m ${role}</div>
+        <div class="player-profile">
+          <div class="profile-kit">${jerseySvg(p.team, p.pos === "GKP")}</div>
+          <div class="profile-copy">
+            <div class="profile-name">${esc(p.fullName)}</div>
+            <div class="profile-meta">${esc(p.teamName)} · ${esc(p.pos)} · £${p.price.toFixed(1)}m ${role}</div>
           </div>
         </div>
         <div class="stat-row"><span>Expected points</span><strong style="color:var(--accent)">${p.displayXp.toFixed(1)}${p.isCaptain ? " (×2)" : ""}</strong></div>
@@ -601,6 +660,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function renderSquadView(squad) {
+      // Captain, vice-captain and doubled points belong to this variation.
+      registerPlayers(squad.starters);
+      registerPlayers(squad.bench);
       const starters = squad.starters;
       const cap = starters.find(p => p.isCaptain) || starters[0];
       const vice = starters.find(p => p.isVice);
@@ -613,7 +675,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById("kpi-form-sub").textContent = `bench ${benchXp.toFixed(1)} xP`;
       document.getElementById("kpi-cost").textContent = `£${squad.totalCost.toFixed(1)}m`;
       document.getElementById("kpi-cost-sub").textContent = `of £${squad.budget.toFixed(1)}m · £${(squad.budget - squad.totalCost).toFixed(1)}m in bank`;
-      document.getElementById("verdict").innerHTML = `<p style="margin-bottom:8px;"><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p><div class="caveat">${(squad.optimizationNotes || []).map(esc).join("<br>")}</div>`;
+      document.getElementById("squad-title").textContent = TAB_NAMES[currentVarIdx] || "The starting XI";
+      document.getElementById("verdict").innerHTML = `<p><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p><details><summary>How this squad was selected</summary><div class="caveat">${(squad.optimizationNotes || []).map(esc).join("<br>")}</div></details>`;
 
       const byPos = (pos) => starters.filter(p => p.pos === pos).map(p => createCardHtml(p)).join("");
       document.getElementById("row-gkp").innerHTML = byPos("GKP");
@@ -626,29 +689,46 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function renderTabs() {
       document.getElementById("tabs").innerHTML = DATA.variations.map((v, i) => `
-        <button class="tab ${i === currentVarIdx ? "active" : ""}" onclick="selectVariation(${i})" title="${esc(v.subtitle)}">
+        <button type="button" class="tab ${i === currentVarIdx ? "active" : ""}" aria-pressed="${i === currentVarIdx}" aria-controls="squad-view" onclick="selectVariation(${i})" title="${esc(v.subtitle)}">
+          <span class="t-number">0${i + 1}</span>
           <span class="t-name">${esc(TAB_NAMES[i] || v.title)}</span>
-          <span class="t-meta">${v.formation} · ${v.expectedPoints.toFixed(1)} xP · C ${esc(v.captain)}</span>
+          <span class="t-meta">${v.formation} · ${v.expectedPoints.toFixed(1)} xP</span>
         </button>`).join("");
     }
-    function selectVariation(i) { currentVarIdx = i; renderTabs(); renderSquadView(DATA.variations[i]); }
+    function selectVariation(i) {
+      currentVarIdx = i;
+      // Preserve keyboard focus instead of replacing the clicked button.
+      if (!document.getElementById("tabs").children.length) renderTabs();
+      document.querySelectorAll(".tab").forEach((el, n) => {
+        el.classList.toggle("active", n === i);
+        el.setAttribute("aria-pressed", String(n === i));
+      });
+      renderSquadView(DATA.variations[i]);
+    }
 
     /* ---------- meta ---------- */
     (function renderMeta() {
       const m = DATA.meta || {};
-      let dl = "";
+      document.getElementById("gw-number").textContent = m.gw || "–";
       if (m.deadline) {
         const d = new Date(m.deadline);
-        dl = " · deadline " + d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+        const deadline = document.getElementById("gw-deadline");
+        deadline.dateTime = m.deadline;
+        deadline.textContent = d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+        const year = d.getUTCFullYear() - (d.getUTCMonth() < 6 ? 1 : 0);
+        document.getElementById("edition").textContent = `${year}/${String(year + 1).slice(2)} · Gameweek ${m.gw || "–"}`;
       }
-      document.getElementById("gw-chip-text").innerHTML = `<strong>Gameweek ${m.gw || "?"}</strong>${esc(dl)}`;
-      document.getElementById("brand-sub").textContent = `Model trained on real outcomes through GW ${m.trainedThroughGw || "?"} · squads optimized within a candidate pool`;
+      document.getElementById("gw-form").textContent = m.formThroughGw ? `Form through GW ${m.formThroughGw} · your local time` : "Shown in your local time";
+      document.getElementById("brand-sub").textContent = `${(DATA.nnMetrics.real_gw_samples || 0).toLocaleString()} player-matches · ${(DATA.nnMetrics.training_seasons || []).length} completed seasons`;
     })();
 
     /* ---------- tooltip helpers ---------- */
     const tip = document.getElementById("tooltip");
     function showTip(evt, html) { tip.innerHTML = html; tip.style.display = "block"; moveTip(evt); }
-    function moveTip(evt) { tip.style.left = (evt.clientX + 14) + "px"; tip.style.top = (evt.clientY - 10) + "px"; }
+    function moveTip(evt) {
+      tip.style.left = Math.max(12, Math.min(evt.clientX + 14, innerWidth - tip.offsetWidth - 12)) + "px";
+      tip.style.top = Math.max(12, Math.min(evt.clientY - 10, innerHeight - tip.offsetHeight - 12)) + "px";
+    }
     function hideTip() { tip.style.display = "none"; }
 
     /* ---------- transfer plan ---------- */
@@ -657,8 +737,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const box = document.getElementById("plan-box");
       if (!plan) { box.innerHTML = `<p>Add your 15 players to <code>my_squad.json</code> and rebuild to see a multi-gameweek plan.</p>`; return; }
       if (plan.error) { box.innerHTML = `<p>Plan unavailable: ${esc(plan.error)}</p>`; return; }
-      const head = `<div class="summary-line"><span>${esc(plan.name)}</span><b>FT ${plan.freeTransfers} · bank £${plan.bank.toFixed(1)}m</b></div>
-                    <div class="summary-line"><span>Plan value (xP − hits)</span><b>${plan.objective.toFixed(1)} · ${plan.totalHits} hit${plan.totalHits === 1 ? "" : "s"}</b></div>`;
+      const head = `<div class="plan-summary"><div><h3>${esc(plan.name)}</h3><p>${plan.freeTransfers} free transfer${plan.freeTransfers === 1 ? "" : "s"} · £${plan.bank.toFixed(1)}m in the bank</p></div><div class="plan-value"><strong>${plan.objective.toFixed(1)}</strong><span>plan xP after ${plan.totalHits} hit${plan.totalHits === 1 ? "" : "s"}</span></div></div>`;
       const weeks = plan.weeks.map(w => {
         const hit = w.hits ? `<span class="pill bad">hit −${4 * w.hits}</span>` : (w.out.length ? `<span class="pill ok">free</span>` : `<span class="pill">hold</span>`);
         const moves = w.out.length
@@ -670,7 +749,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div style="margin-top:4px;color:var(--muted)">Captain ${esc(w.captain)} · XI ${w.xp.toFixed(1)} xP</div>
         </div>`;
       }).join("");
-      box.innerHTML = head + `<div style="margin-top:8px">${weeks}</div><div class="plan-foot">Free transfers bank to five. Extra transfers cost 4 points plus a 1.5-point friction margin, so marginal swaps are skipped. Selling prices assumed equal to current prices.</div>`;
+      box.innerHTML = head + `<div class="plan-weeks">${weeks}</div><div class="plan-foot">Free transfers bank to five. Extra transfers cost 4 points plus a 1.5-point friction margin, so marginal swaps are skipped. Selling prices assumed equal to current prices.</div>`;
     })();
 
     /* ---------- model quality ---------- */
@@ -688,15 +767,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (!h.mae_points) { box.innerHTML = `<p>Run <code>python3 fpl_assistant.py train-nn</code> to populate.</p>`; return; }
       const top = Object.entries(m.feature_importance || {}).slice(0, 4).map(([k]) => k.replace(/_/g, " ")).join(", ");
       box.innerHTML = `
-        <div class="summary-line"><span>Trained on</span><b>${m.real_gw_samples} player-weeks · GW ≤ ${m.latest_trained_gw}</b></div>
-        <div class="summary-line"><span>${m.test ? "Test (excluded from epoch selection)" : "Validation (used for epoch selection)"}</span><b>${esc((m.test ? m.test_gws : m.holdout_gws) || "")} (${h.n | 0} rows)</b></div>
+        <div class="summary-line"><span>Historical training</span><b>${Number(m.real_gw_samples).toLocaleString()} player-matches · ${esc(m.training_end || "")}</b></div>
+        <div class="summary-line"><span>${m.test ? "Held-out test" : "Validation"}</span><b>${esc((m.test ? m.test_gws : m.holdout_gws) || "")} (${(h.n | 0).toLocaleString()} rows)</b></div>
         <div class="metric-bars">
           ${pairBars("Points error (MAE, lower is better)", h.mae_points, h.mae_naive_baseline, true, f2)}
           ${pairBars("Correlation with actual points", h.corr_points, h.corr_naive_baseline, false, f2)}
           ${pairBars("Minutes log-loss (lower is better)", h.minutes_logloss, h.minutes_logloss_baseline, true, f2)}
           ${pairBars("Haul odds Brier (lower is better)", h.haul_brier, h.haul_brier_baseline, true, (x) => Number(x).toFixed(3))}
         </div>
-        <div class="caveat">Naive baseline: prior play-rate × points per appearance. Constant baselines are fitted on training rows only. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms (not causal importance): ${esc(top)}.</div>`;
+        <div class="caveat">Current-season outcomes are excluded from training and tuning. Naive baseline: prior points per fixture.</div><details><summary>Training & evaluation notes</summary><div class="caveat">Trained on ${esc((m.training_seasons || []).join(", "))}. ${m.test ? "Historical test rows are excluded from model selection and calibration." : "Validation is used for model selection."} Deployment is then refit on completed seasons. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms: ${esc(top)}.</div></details>`;
     })();
 
     /* ---------- backtest chart ---------- */
@@ -737,7 +816,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const m1 = bt.modelRollingVsAvg, m2 = bt.modelFhVsNaiveFh, pl = bt.playerLevel;
       const t = bt.totals;
       box.innerHTML = `
-        <div class="summary-line"><span>Weeks ${bt.weeks[0]}–${bt.weeks[bt.weeks.length - 1]}, trained only on earlier weeks</span><b>${bt.weeks.length} GWs</b></div>
+        <div class="summary-line"><span>This season · GW ${bt.weeks[0]}–${bt.weeks[bt.weeks.length - 1]}</span><b>${bt.weeks.length} gameweeks</b></div>
         ${svg}${legend}
         <div style="margin-top:10px">
           <div class="summary-line"><span>Totals · model / FPL avg / naive</span><b>${t.model_rolling} / ${t.fpl_average} / ${t.naive_rolling}</b></div>
@@ -745,7 +824,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="summary-line"><span>Model vs naive, weekly rebuild</span><b>${signed(m2.mean)} ± ${f1(m2.sd)} · won ${m2.weeks_won}/${m2.weeks}</b></div>
           <div class="summary-line"><span>Player-level MAE · correlation</span><b>${f2(pl.model_mae)} vs ${f2(pl.naive_mae)} · ${f2(pl.model_corr)} vs ${f2(pl.naive_corr)}</b></div>
         </div>
-        <div class="caveat">Real points with auto-subs and captaincy. Match logs are restricted to earlier weeks; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. Short backtests cannot establish a reliable edge.</div>`;
+        <div class="caveat">Current-season outcomes are evaluated with fixed historical weights. Form inputs use earlier weeks; roster and club membership use today's snapshot. Short tests cannot establish a reliable edge.</div>`;
+      const historical = DATA.historicalBacktest || [];
+      if (historical.length) box.innerHTML += `<h4 class="historical-heading">Further back · ${historical.reduce((n, r) => n + r.weeks, 0)} historical weeks</h4>
+        ${historical.map(r => `<div class="summary-line"><span>${esc(r.season)} · model / naive</span><b>${r.totals.model_rolling} / ${r.totals.naive_rolling}</b></div>
+        <div class="caveat">Margin ${signed(r.margin)} pts/week; 95% block-bootstrap interval ${f1(r.interval[0])} to ${f1(r.interval[1])}.</div>`).join("")}
+        <div class="caveat">GW19–38 in each season, excluded from fitting, model selection and calibration. Official historical human averages are unavailable. Archived fixture schedules may reflect later postponements.</div>`;
     })();
 
     document.getElementById("footer").textContent = "Expected points = P(60+ minutes) × points given a start + P(cameo) × cameo points. Availability uses the learned minutes model and official FPL flags; headlines are informational only.";
@@ -771,7 +855,7 @@ def serve_app(port: int = 8000) -> None:
     generate_index_html()
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", port), handler) as httpd:
-        print(f"Serving FPL AI Web App at http://localhost:{port}/index.html")
+        print(f"Serving Touchline at http://localhost:{port}/index.html")
         httpd.serve_forever()
 
 

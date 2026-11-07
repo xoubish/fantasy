@@ -232,15 +232,19 @@ def format_markdown_report(
 
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    print("1/2 Syncing FPL API & 3-Year Historical Dataset...")
+    print("1/3 Syncing the current FPL roster and match logs for form inputs...")
     fpl_status = sync_live_fpl_data(fetch_player_histories=args.deep)
     print(f"    FPL Live Synced: {fpl_status['live_fpl_synced']}")
-    print(f"    3-Year History Synced: {fpl_status['historical_synced']}")
+    print(f"    Current player histories synced: {fpl_status['historical_synced']}")
     if fpl_status["errors"]:
         for err in fpl_status["errors"]:
-            print(f"    [Note] {err} (Using built-in 2026/27 + 3yr database)")
+            print(f"    [Note] {err}")
 
-    print("2/2 Scraping Sporting Life, BBC Sport, Guardian & Sky Sports News...")
+    from historical_data import sync_historical_data
+    print("2/3 Restoring completed-season training data...")
+    archive = sync_historical_data()
+    print(f"    Historical seasons: {', '.join(archive['seasons'])}")
+    print("3/3 Scraping Sporting Life, BBC Sport, Guardian & Sky Sports News...")
     news_status = scrape_sports_websites()
     print(f"    Articles fetched: {news_status['articles_fetched']}")
     if news_status["errors"]:
@@ -427,7 +431,7 @@ def _print_model_metrics(net) -> None:
     label = "Test" if m.get("test") else "Validation (used for epoch selection)"
     weeks = m.get("test_gws") if m.get("test") else m.get("holdout_gws")
     print(
-        f"    {m.get('architecture')} | {m.get('real_gw_samples')} player-gameweek rows through GW {m.get('latest_trained_gw')}\n"
+        f"    {m.get('architecture')} | {m.get('real_gw_samples')} historical player-match rows through {m.get('training_end', m.get('latest_trained_gw'))}\n"
         f"    {label} {weeks}: MAE vs actual points {h.get('mae_points')} "
         f"(naive baseline {h.get('mae_naive_baseline')}, constant {h.get('mae_constant_baseline')}) | "
         f"corr {h.get('corr_points')} (naive {h.get('corr_naive_baseline')})\n"
@@ -437,7 +441,10 @@ def _print_model_metrics(net) -> None:
 
 
 def cmd_train_nn(args: argparse.Namespace) -> None:
-    print("Training multi-head FPL model (minutes | points given 60+ | haul) on real gameweek outcomes...")
+    if getattr(args, "fetch_real", False):
+        from historical_data import sync_historical_data
+        sync_historical_data()
+    print("Training on completed historical seasons only; current-season outcomes are evaluation data...")
     net = get_or_train_neural_net(force_retrain=True, verbose=True)
     _print_model_metrics(net)
     print(json.dumps(net.metrics, indent=2))
@@ -466,8 +473,10 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     news_status = scrape_sports_websites()
     print(f"    Articles fetched: {news_status['articles_fetched']}")
 
-    print("=== Step 3/4: Retraining multi-head model (time-ordered holdout) ===")
-    net = get_or_train_neural_net(force_retrain=True)
+    from historical_data import sync_historical_data
+    sync_historical_data()
+    print("=== Step 3/4: Loading model fitted only on completed historical seasons ===")
+    net = get_or_train_neural_net()
     _print_model_metrics(net)
 
     print("=== Step 4/4: Running AI Tactical Head Coach & Rebuilding Web App (index.html) ===")
@@ -491,7 +500,7 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
             ],
             check=False,
         )
-        gw_num = net.metrics.get("latest_trained_gw", 9) + 1
+        gw_num = load_players()[0].target_gw
         subprocess.run(
             [
                 "git",

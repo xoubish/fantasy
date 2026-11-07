@@ -43,7 +43,7 @@ from fpl_data import (
 )
 
 NN_WEIGHTS_PATH = DATA_DIR / "nn_weights.json"
-MODEL_VERSION = "mh-v2"
+MODEL_VERSION = "mh-v3.1-historical"
 
 # Average FPL points of a 1-59 minute appearance (re-estimated from data at train time)
 DEFAULT_CAMEO_POINTS = 1.15
@@ -82,13 +82,12 @@ FEATURE_NAMES: List[str] = [
     "att_vs_def",
     "def_vs_att",
     "poisson_cs_prob",
-    "fdr",
     # --- static / market ---
     "price",
     "past_season_pts90",
     "past_season_mins_share",
-    "pen_taker",
-    "corner_taker",
+    "defcon_observed",
+    "scoring_2025_onward",
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
@@ -246,6 +245,7 @@ def features_from_history(
     pen_taker: bool,
     corner_taker: bool,
     fallback_player: Optional[PlayerRecord] = None,
+    season_start: int = 2026,
 ) -> List[float]:
     """Builds the feature vector for ONE fixture from match rows strictly before it."""
     rec = compute_recency_weighted_metrics(prior_rows, fallback_player)
@@ -283,12 +283,11 @@ def features_from_history(
         (t_att - o_def) / 200.0,
         (t_def - o_att) / 200.0,
         cs_prob,
-        float(fixture.get("difficulty", 3)) / 5.0,
         price / 15.0,
         past_pts90 / 8.0,
         past_mins_share,
-        1.0 if pen_taker else 0.0,
-        1.0 if corner_taker else 0.0,
+        float(any("defensive_contribution" in r for r in prior_rows)),
+        float(season_start >= 2025),
     ]
 
 
@@ -331,6 +330,7 @@ def extract_features(
     player: PlayerRecord, fixture_override: Optional[Dict[str, Any]] = None
 ) -> List[float]:
     """Live feature vector for `player`'s next fixture (or any dict from `upcoming_3gw_fixtures`)."""
+    from historical_data import current_season_start
     fixture = fixture_override or {
         "is_home": player.is_home,
         "team_att": player.team_attack_strength,
@@ -350,6 +350,7 @@ def extract_features(
         player.penalties_order == 1,
         player.corners_order in (1, 2),
         fallback_player=player,
+        season_start=current_season_start(),
     )
 
 
@@ -364,6 +365,12 @@ class Sample:
     gw: int
     player_id: int
     naive_xp: float  # baseline: prior played-rate x prior points per appearance
+    season: str = ""
+    fixture_id: int = 0
+
+    @property
+    def period(self) -> Tuple[int, int]:
+        return (int(self.season[:4]) if self.season else 0, self.gw)
 
 
 def build_training_samples(
@@ -472,7 +479,12 @@ def _sigmoid(z: np.ndarray) -> np.ndarray:
 class FPLNeuralNetwork:
     """Multi-head MLP: trunk F->h1->h2, heads minutes(3), points(1), haul(1)."""
 
-    def __init__(self, in_dim: int = N_FEATURES, h1: int = 48, h2: int = 24, seed: int = 42):
+    def __init__(self, in_dim: int = N_FEATURES, h1: int = 48, h2: int = 24, seed: int = 42, points_loss: str = "mse"):
+        if points_loss not in ("mse", "huber"):
+            raise ValueError("points_loss must be mse or huber")
+        self.points_loss = points_loss
+        self.calibration = {"minutes_temperature": 1.0, "points": [[0.0, 1.0]] * 4,
+                            "residual_std": [3.0] * 4, "fitted": False}
         rng = np.random.default_rng(seed)
         self.in_dim, self.h1, self.h2 = in_dim, h1, h2
         self.params: Dict[str, np.ndarray] = {
@@ -512,16 +524,20 @@ class FPLNeuralNetwork:
         if Xa.ndim == 1:
             Xa = Xa[None, :]
         f = self._forward(Xa)
-        xp_full = np.clip(f["xp"], XP_FULL_CLIP[0], XP_FULL_CLIP[1])
-        p_full = f["pm"][:, 2]
-        p_cameo = f["pm"][:, 1]
+        pos = Xa[:, :4].argmax(axis=1)
+        calibration = np.asarray(self.calibration["points"])[pos]
+        xp_full = np.clip(calibration[:, 0] + calibration[:, 1] * f["xp"], XP_FULL_CLIP[0], XP_FULL_CLIP[1])
+        pm = _softmax(np.log(np.maximum(f["pm"], 1e-12)) / self.calibration["minutes_temperature"])
+        p_full = pm[:, 2]
+        p_cameo = pm[:, 1]
         return {
-            "p_none": f["pm"][:, 0],
+            "p_none": pm[:, 0],
             "p_cameo": p_cameo,
             "p_full": p_full,
             "xp_full": xp_full,
             "haul": np.clip(f["ph"], 0.01, 0.9),
             "expected_points": p_full * xp_full + p_cameo * self.cameo_points,
+            "residual_std": np.asarray(self.calibration["residual_std"])[pos],
         }
 
     def predict_full(self, x: Sequence[float]) -> Dict[str, float]:
@@ -543,7 +559,7 @@ class FPLNeuralNetwork:
         epochs: int = 40,
         lr: float = 1e-3,
         l2: float = 1e-3,
-        batch_size: int = 64,
+        batch_size: int = 256,
         seed: int = 42,
         verbose: bool = False,
         on_epoch_end: Optional[Callable[[int, "FPLNeuralNetwork"], None]] = None,
@@ -572,7 +588,11 @@ class FPLNeuralNetwork:
         self.sigma = np.maximum(X.std(axis=0), 0.05)
         # Recency weight: the most recent gameweeks matter slightly more
         gws = np.asarray([s.gw for s in samples], dtype=float)
-        w_time = 0.93 ** (gws.max() - gws)
+        years = np.asarray([s.period[0] for s in samples])
+        # Season IDs never collide. Older seasons retain meaningful weight rather than
+        # being nearly erased by a weekly decay applied across multiple years.
+        w_time = (0.65 ** (years.max() - years)) * (0.995 ** (38 - gws))
+        w_time /= w_time.mean()
 
         P = self.params
         m = {k: np.zeros_like(v) for k, v in P.items()}
@@ -597,9 +617,10 @@ class FPLNeuralNetwork:
                 onehot[np.arange(bs), y_m[idx]] = 1.0
                 d_m = (f["pm"] - onehot) * wt[:, None] / bs
 
-                # points head: Huber on rows with 60+ minutes
+                # MSE targets the conditional mean required by expected-points decisions.
                 err = f["xp"] - pts[idx]
-                d_xp = np.clip(err, -huber_delta, huber_delta) * fm * wt / n_full * 0.5
+                point_grad = err if self.points_loss == "mse" else np.clip(err, -huber_delta, huber_delta)
+                d_xp = point_grad * fm * wt / n_full * 0.5
 
                 # haul head: BCE on rows with 60+ minutes
                 d_h = (f["ph"] - y_h[idx]) * fm * wt / n_full * 0.6
@@ -698,6 +719,8 @@ class FPLNeuralNetwork:
             "sigma": self.sigma.tolist(),
             "cameo_points": self.cameo_points,
             "baselines": self.baselines,
+            "points_loss": self.points_loss,
+            "calibration": self.calibration,
             "params": {k: v.tolist() for k, v in self.params.items()},
             "metrics": self.metrics,
         }
@@ -709,12 +732,13 @@ class FPLNeuralNetwork:
         if data.get("version") != MODEL_VERSION or data.get("feature_names") != FEATURE_NAMES:
             raise ValueError("Outdated neural model schema; retrain required.")
         in_dim, h1, h2 = data["dims"]
-        net = cls(in_dim=in_dim, h1=h1, h2=h2)
+        net = cls(in_dim=in_dim, h1=h1, h2=h2, points_loss=data["points_loss"])
         net.params = {k: np.asarray(v, dtype=float) for k, v in data["params"].items()}
         net.mu = np.asarray(data["mu"], dtype=float)
         net.sigma = np.asarray(data["sigma"], dtype=float)
         net.cameo_points = float(data.get("cameo_points", DEFAULT_CAMEO_POINTS))
         net.baselines = data["baselines"]
+        net.calibration = data["calibration"]
         net.metrics = data.get("metrics", {})
         return net
 
@@ -810,17 +834,17 @@ def train_with_time_holdout(
 
 
 def get_or_train_neural_net(force_retrain: bool = False, verbose: bool = False) -> FPLNeuralNetwork:
-    """Loads cached weights, retraining when a new gameweek has finished or the schema changed."""
+    """Fit completed historical seasons only; live weeks are inference/evaluation inputs."""
+    from historical_training import archive_signature, train_historical_model
+    signature = archive_signature()
     if NN_WEIGHTS_PATH.exists() and not force_retrain:
         try:
             net = FPLNeuralNetwork.load(NN_WEIGHTS_PATH)
-            if latest_finished_gw() <= int(net.metrics.get("latest_trained_gw", 0) or 0):
+            if net.metrics.get("training_signature") == signature:
                 return net
         except Exception:
             pass
-    players = load_players()
-    samples = build_training_samples(players)
-    net, _ = train_with_time_holdout(samples, verbose=verbose)
+    net, _ = train_historical_model(verbose=verbose)
     net.save(NN_WEIGHTS_PATH)
     return net
 

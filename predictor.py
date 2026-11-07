@@ -99,6 +99,7 @@ class PlayerPrediction:
     gw_xps: Dict[int, float] = field(default_factory=dict)  # gameweek -> xP (next HORIZON_GWS)
     p_full: float = 0.0  # P(60+ minutes) this gameweek
     p_cameo: float = 0.0  # P(1-59 minutes) this gameweek
+    xp_uncertainty: float = 0.0
 
 
 def _availability_for_future_gw(news: PlayerNewsAssessment, model_full: float, model_cameo: float, k: int) -> Tuple[float, float]:
@@ -124,9 +125,10 @@ def predict_player(player: PlayerRecord, articles: List[NewsArticle]) -> PlayerP
     base = nn_model.predict_full(base_feats)
     news = analyze_player_news(player, articles, minutes_probs=(base["p_full"], base["p_cameo"]))
 
-    tactical_delta = coach.tactical_xp_delta if coach else 0.0
-    haul_boost = coach.haul_prob_boost if coach else 0.0
-    horizon_bonus = coach.horizon_3gw_bonus if coach else 0.0
+    adjust = coach is not None and nn_model.metrics.get("coach_adjustments", False)
+    tactical_delta = coach.tactical_xp_delta if adjust else 0.0
+    haul_boost = coach.haul_prob_boost if adjust else 0.0
+    horizon_bonus = coach.horizon_3gw_bonus if adjust else 0.0
     role_tag = coach.role_tag if coach else "STARTER"
     coach_note = coach.coach_note if coach else f"Next fixtures: {player.fixture_run_3gw}"
 
@@ -208,6 +210,10 @@ def predict_player(player: PlayerRecord, articles: List[NewsArticle]) -> PlayerP
         gw_xps=gw_xps,
         p_full=round(news.start_probability, 3),
         p_cameo=round(news.cameo_probability, 3),
+        xp_uncertainty=round(base["residual_std"] / math.sqrt(max(3, sum(
+            0.9 ** max(0, target_gw - 1 - int(r.get("round", 0)))
+            for r in player.gw_history if int(r.get("round", 0)) < target_gw and float(r.get("minutes", 0)) > 0
+        ))), 3),
     )
 
 
@@ -361,6 +367,7 @@ def to_plan_players(preds: Sequence[PlayerPrediction], sell_prices: Optional[Dic
             xp_by_gw=dict(p.gw_xps),
             ownership=p.player.selected_by_percent,
             haul_prob=p.haul_prob,
+            xp_uncertainty=p.xp_uncertainty,
         )
         for p in preds
     ]

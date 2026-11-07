@@ -1,50 +1,80 @@
-# Model review follow-up — November 7, 2026
+# Historical model implementation and measured results
 
-The seven confirmed bug groups are fixed: owned-player values in rolling simulations,
-deadline selection, incomplete double-gameweek caches, discarded solver lineups,
-wildcard and terminal free-transfer accounting, the optional coach's headline field,
-and default history fetching / empty-data errors. Regression checks run in the weekly
-GitHub Actions workflow before refreshing data.
+Training now uses **113,260 player-match rows** from completed seasons
+2022-23, 2023-24, 2024-25, 2025-26. Current-season outcomes are excluded from all fitting,
+model selection and calibration. Current logs supply form/minutes inputs and evaluation
+outcomes; the current roster controls live selection only.
 
-Evaluation now separates training (GW2–6), epoch-selection validation (GW7–8), and a
-test (GW9) excluded from epoch selection. Constant points, minutes, and haul baselines
-are fitted on training rows only. The deployed model is subsequently refit on all rows.
-Solver status, optimality gap, and candidate-pool scope are exposed in squad results.
+## Source and data integrity
 
-## Recomputed results
+Source: [Vaastav Anand's FPL Historical Dataset](https://github.com/vaastav/Fantasy-Premier-League).
+The archive is pinned by commit and file SHA256 in `historical_manifest.json`.
+Ten identical duplicates and 322 Assistant Manager rows were removed; goalkeeper
+position names were normalized. Season-local IDs never join across years. Stable
+FPL codes supply previous-season summary features. No archive `xP`, end-of-season
+FDR/strength or current set-piece orders enter the model.
 
-All runs below use the existing local API cache; no fresh API data or LLM calls were used.
+## Evaluation protocol
 
-| GW3–9 strategy | Previously saved | Corrected, coach enabled | Corrected, coach disabled |
-| --- | ---: | ---: | ---: |
-| Model rolling manager, after hits | 340 | 345 | 356 |
-| Naive rolling manager, after hits | 283 | 270 | 270 |
-| Model weekly rebuild | 409 | 409 | 367 |
-| Naive weekly rebuild | 352 | 352 | 352 |
-| Official FPL average total | 377 | 377 | 377 |
-| Model player MAE | 1.687 | 1.687 | 1.692 |
-| Weekly rebuild projection bias | +12.1 | +12.1 | +16.8 |
+Each historical test fits on earlier seasons plus GW1–10 of its evaluation season,
+selects loss/epochs on GW11–14, calibrates on GW15–18, and tests GW19–38. There are
+**40 historical test weeks**, plus seven current-season evaluation weeks. Deployment
+then refits on completed seasons only; it is distinct from the retained test model.
 
-The coach ablation improves rolling-manager totals but worsens weekly rebuilds and
-prediction calibration. Seven weeks do not justify selecting a default based on those
-totals. The existing coach default is retained. Its behavior remains testable with
-`python3 backtest.py --no-coach --no-save`.
+Huber and squared-error losses were compared using validation RMSE. For the latest
+historical split, Huber scored 2.0421 and squared
+error 2.0425; the difference is small. Huber at
+9 epochs was selected without using test scores. Regularized point
+calibration and minutes temperature use the separate calibration block. Calibrated
+latest-season test RMSE is 1.8559, versus
+1.8533 uncalibrated: calibration did not improve
+that test's RMSE, although overall bias moved closer to zero. It was not retuned
+against these test results.
 
-The separate GW9 test has 447 player rows: model MAE **1.4868**, naive MAE **1.6706**,
-RMSE **2.3330**. Haul Brier is **0.0801**, versus **0.0794** for the training-rate baseline.
-This test uses a different training/split protocol from the previously reported GW8–9
-validation score, so their MAEs are not a before/after measure of model improvement.
+## Historical rolling-manager results
 
-## Remaining modeling work
+| Test period | Model | Naive, same planner | Difference | 95% block-bootstrap interval, pts/week |
+| --- | ---: | ---: | ---: | --- |
+| 2024-25 GW19–38 | 1156 | 1135 | +21 | -3.30 to 5.60 |
+| 2025-26 GW19–38 | 1100 | 1014 | +86 | -3.45 to 10.55 |
 
-- Squad projections remain too optimistic. Compare a mean-targeting loss with Huber
-  inside chronological validation, then assess captain and selected-XI calibration on
-  future weeks; do not tune corrections against the test results above.
-- Historical roster, club membership, fixture difficulty and set-piece metadata come
-  from the current cache. Fully point-in-time evaluation requires archived snapshots.
-- Selling prices still assume current prices; chips beyond wildcard-style transfers
-  are not simulated. Candidate pruning and solver time limits prevent any guarantee
-  of a full-league optimum.
+Combined model advantage: **+107 points over 40 weeks**.
+Both seasonal uncertainty intervals include zero. These results do not establish a
+reliable edge. Historical official human averages are unavailable, so the naive
+baseline must not be described as the human average.
 
-Validation: `python3 -m unittest -v test_regressions`, training, both GW3–9 backtests,
-static page generation, and the squad-report pipeline completed successfully.
+## Current-season results (GW3–9; never used for fitting)
+
+| Metric | Previous corrected short-history model | Historical model |
+| --- | ---: | ---: |
+| Player MAE | 1.687 | 1.660 |
+| Player correlation | 0.400 | 0.460 |
+| Weekly rebuild overprediction, points/week | +12.1 | +1.2 |
+| Realistic manager points | 345 | 328 |
+| Paid transfers | 6 | 0 |
+| FPL average total | 377 | 377 |
+
+Prediction calibration improved substantially, but realistic-manager performance
+worsened in this short current-season test and remains below average. The new planner
+avoids uncertain marginal transfers using historical residual errors and recent
+appearance counts. This buffer is a decision heuristic, not a confidence interval.
+Neither the buffer nor other parameters were selected to maximize these seven weeks.
+Coach prose remains available; unvalidated heuristic/LLM adjustments no longer alter
+calibrated expected points.
+
+## Remaining limits
+
+Historical fixtures may include later postponements; deadline-exact prices and injury
+news are not fully archived. Current-season tests retain current-snapshot roster/club
+metadata. Selling-price gains and most chips are not simulated. Scoring-era features
+cannot fully reconstruct past BPS/assist rules or learn new 2026–27 scoring changes
+without a completed season under them. The final refit also needs continued calibration
+monitoring: its weights differ from the earlier probe on which calibration was fitted.
+
+Successful future live syncs save timestamped public-input snapshots locally in
+`data/snapshots/` for later evaluation. They do not repair missing historical snapshots
+and are never training inputs.
+
+Validation: historical data normalization, chronological partition and current-season
+exclusion tests, transfer-risk regression checks, model training, both 20-week historical
+strategy tests, current-season testing, page payload checks, and squad-report generation.

@@ -4,7 +4,7 @@ Walk-forward backtester with current-snapshot metadata (backtest.py)
 
 For every completed gameweek T in the test range:
   1. Blind all data to gameweeks < T (match logs, prices, team strengths, availability).
-  2. Train the multi-head network on those rows only (early-stopped on the last prior GW).
+  2. Use fixed weights trained only on completed historical seasons; no current rows are fitted.
   3. Predict every player for GW T (and the following horizon).
   4. Run several STRATEGIES, score them with real GW T points, official auto-subs and captaincy:
 
@@ -39,9 +39,6 @@ from ai_coach import evaluate_squad_with_ai_coach
 from fpl_data import CACHE_BOOTSTRAP, CACHE_FIXTURES, DATA_DIR, HORIZON_GWS, PlayerRecord, compute_team_strengths, load_players
 from neural_model import (
     FPLNeuralNetwork,
-    Sample,
-    build_training_samples,
-    train_with_time_holdout,
 )
 from optimizer import PlanPlayer, plan_transfers, select_candidate_pool, solve_squad
 from predictor import PlayerPrediction, predict_player, to_plan_players
@@ -169,17 +166,9 @@ def score_week(
 # Per-gameweek model fitting and prediction
 # --------------------------------------------------------------------------------------
 def fit_model_for_gw(blinded: List[PlayerRecord], target_gw: int) -> Tuple[FPLNeuralNetwork, int]:
-    samples = build_training_samples(blinded, max_gw=target_gw - 1)
-    if not samples:
-        raise RuntimeError(f"No training rows before GW {target_gw}")
-    latest = max(s.gw for s in samples)
-    if latest >= 4:
-        # The outer target gameweek is the test; all earlier rows are development data.
-        net, _ = train_with_time_holdout(samples, holdout_gws=1, test_gws=0)
-    else:
-        net = FPLNeuralNetwork()
-        net.train(samples, epochs=15)
-    return net, len(samples)
+    from neural_model import get_or_train_neural_net
+    net = get_or_train_neural_net()
+    return net, int(net.metrics["real_gw_samples"])
 
 
 def naive_plan_players(preds: List[PlayerPrediction], gws: List[int]) -> List[PlanPlayer]:
@@ -192,7 +181,8 @@ def naive_plan_players(preds: List[PlayerPrediction], gws: List[int]) -> List[Pl
         ppa = (sum(float(r.get("total_points", 0) or 0) for r in played) / len(played)) if played else 0.0
         fixtures_per_gw = {g: sum(1 for f in p.player.upcoming_3gw_fixtures if int(f.get("gw", 0)) == g) for g in gws}
         out.append(PlanPlayer(p.player.id, p.player.web_name, p.player.team_short, p.player.position, p.player.price, p.player.price,
-                              {g: rate * ppa * fixtures_per_gw.get(g, 0) for g in gws}, p.player.selected_by_percent, 0.0))
+                              {g: rate * ppa * fixtures_per_gw.get(g, 0) for g in gws}, p.player.selected_by_percent, 0.0,
+                              p.xp_uncertainty))
     return out
 
 
@@ -342,10 +332,15 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
                 "total": int(sum(d)), "weeks_won": sum(1 for x in d if x > 0), "weeks": len(d)}
 
     arr = np.asarray(pred_rows) if pred_rows else np.zeros((0, 3))
+    from neural_model import get_or_train_neural_net
+    model_metadata = get_or_train_neural_net().metrics
     summary = {
+        "training_seasons": model_metadata.get("training_seasons", []),
+        "training_samples": model_metadata.get("real_gw_samples"),
+        "current_season_fitted": False,
         "limitations": "Historical match logs are time-filtered; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. This is not a fully point-in-time simulation.",
         "weeks_tested": gws,
-        "use_coach": use_coach,
+        "use_coach": False,
         "transfer_friction": friction,
         "totals": {k: int(sum(w[k] for w in weeks)) for k in ("model_freehit", "naive_freehit", "model_rolling", "naive_rolling", "fpl_average")},
         "model_rolling_vs_fpl_average": margin_stats("model_rolling"),
@@ -371,7 +366,7 @@ def print_summary(res: Dict[str, Any]) -> None:
     s = res["summary"]
     weeks = res["weeks"]
     print("\n" + "=" * 96)
-    print("  WALK-FORWARD BACKTEST  (trained on GW < T, scored on GW T; current-snapshot metadata)")
+    print("  CURRENT-SEASON TEST  (fixed historical weights; current-snapshot roster metadata)")
     print("=" * 96)
     print(f"{'GW':>3} | {'model FH':>8} {'(pred)':>7} | {'naive FH':>8} | {'model roll':>10} {'hits':>4} | {'naive roll':>10} {'hits':>4} | {'FPL avg':>7} | {'MAE m/n':>11} | {'corr m/n':>11}")
     for w in weeks:

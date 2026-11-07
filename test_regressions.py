@@ -1,5 +1,6 @@
 """Offline regression tests for data integrity, FPL accounting and evaluation."""
 import json
+import gzip
 import tempfile
 import unittest
 from dataclasses import replace
@@ -15,6 +16,8 @@ import fpl_data
 import neural_model
 import optimizer
 import predictor
+import historical_data
+import historical_training
 from news_scraper import NewsArticle
 
 
@@ -27,6 +30,19 @@ def players():
 
 
 class DataTests(unittest.TestCase):
+    def test_public_snapshot_preserves_fetch_times(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bootstrap, fixtures, summaries = (root / name for name in ("bootstrap.json", "fixtures.json", "summaries.json"))
+            bootstrap.write_text('{"events": []}')
+            fixtures.write_text('[]')
+            summaries.write_text('{"1": {"fetched_at": "2026-11-07T10:00:00Z", "history": []}}')
+            with patch.object(fpl_data, "DATA_DIR", root), patch.object(fpl_data, "CACHE_BOOTSTRAP", bootstrap), patch.object(fpl_data, "CACHE_FIXTURES", fixtures), patch.object(fpl_data, "CACHE_SUMMARIES", summaries):
+                path = fpl_data.archive_live_snapshot()
+            with gzip.open(path, "rt") as handle:
+                saved = json.load(handle)
+            self.assertIn("observed_at", saved)
+            self.assertEqual(saved["player_summaries"]["1"]["fetched_at"], "2026-11-07T10:00:00Z")
     def test_deadline_not_fixture_count_controls_target(self):
         bootstrap = {"events": [
             {"id": 10, "deadline_time": "2026-11-06T18:30:00Z", "is_current": True},
@@ -195,6 +211,70 @@ class CoachTests(unittest.TestCase):
             ai_coach._refine_top_candidates_with_gemini([], {}, [article], "test-key")
         self.assertEqual(request.call_count, 1)
         self.assertIn("Team news", request.call_args.args[0].data.decode())
+
+
+class HistoricalTests(unittest.TestCase):
+    def test_target_match_outcomes_do_not_change_its_features(self):
+        row = dict(round=1, fixture=1, code=123, position="MID", value=70, minutes=90,
+                   total_points=2, kickoff_time="2025-08-15T19:00:00Z", expected_goals=0)
+        archive = {"players": {7: [row]}, "deadlines": {1: "2025-08-15T17:30:00Z"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            manifest.write_text(json.dumps({"seasons": ["2025-26"]}))
+            with patch.object(historical_data, "MANIFEST_PATH", manifest), patch.object(historical_data, "current_season_start", return_value=2026), patch.object(historical_data, "load_season", return_value=archive), patch.object(historical_data, "prior_season_stats", return_value={}), patch.object(historical_data, "fixture_features", return_value={}):
+                before = historical_data.build_historical_samples()[0]
+                row.update(total_points=25, expected_goals=4, minutes=30)
+                after = historical_data.build_historical_samples()[0]
+        self.assertEqual(before.features, after.features)
+        self.assertEqual(len(before.features), neural_model.N_FEATURES)
+        self.assertNotEqual(before.points, after.points)
+
+    def test_seasons_do_not_collide_and_test_never_enters_development(self):
+        feats = [0.] * neural_model.N_FEATURES
+        samples = [neural_model.Sample(feats, 90, 2, gw, 1, 0, season=season)
+                   for season in ("2023-24", "2024-25", "2025-26", "2026-27")
+                   for gw in range(1, 39)]
+        train, val, calibration, test = historical_training.split_historical(samples, "2025-26")
+        self.assertIn((2024, 38), {s.period for s in train})
+        self.assertEqual({s.period for s in val}, {(2025, g) for g in range(11, 15)})
+        self.assertEqual({s.period for s in calibration}, {(2025, g) for g in range(15, 19)})
+        self.assertEqual({s.period for s in test}, {(2025, g) for g in range(19, 39)})
+        self.assertFalse(any(s.season == "2026-27" for split in (train, val, calibration, test) for s in split))
+
+    def test_archive_normalizes_goalkeepers_and_excludes_managers(self):
+        fixture = dict(id="1", event="1", team_h="1", team_a="2", team_h_score="1", team_a_score="0",
+                       kickoff_time="2025-08-15T19:00:00Z", finished="True")
+        player = dict(element="7", fixture="1", round="1", GW="1", was_home="True", position="GK",
+                      kickoff_time=fixture["kickoff_time"], opponent_team="2", name="Keeper", minutes="90", total_points="6", value="50")
+        tables = {"fixtures.csv": [fixture], "players_raw.csv": [{"id": "7", "code": "123"}],
+                  "teams.csv": [{"id": "1"}, {"id": "2"}],
+                  "gws/merged_gw.csv": [player, dict(player), dict(player, element="99", position="AM")]}
+        historical_data.load_season.cache_clear()
+        with patch.object(historical_data, "csv_rows", side_effect=lambda s, f: tables[f]):
+            result = historical_data.load_season("test-season")
+        historical_data.load_season.cache_clear()
+        self.assertEqual(result["players"][7][0]["position"], "GKP")
+        self.assertEqual(result["players"][7][0]["team_id"], 1)
+        self.assertEqual(result["duplicate_rows_removed"], 1)
+        self.assertEqual(result["manager_rows_excluded"], 1)
+
+    def test_current_season_outcomes_rejected_by_importer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            manifest.write_text(json.dumps({"seasons": ["2026-27"]}))
+            with patch.object(historical_data, "MANIFEST_PATH", manifest), patch.object(historical_data, "current_season_start", return_value=2026):
+                with self.assertRaisesRegex(ValueError, "Current-season"):
+                    historical_data.build_historical_samples()
+
+    def test_risk_margin_blocks_noisy_marginal_swap(self):
+        pool = [replace(p, xp_by_gw={1: 5}, xp_uncertainty=1.5) for p in players()]
+        pool.append(optimizer.PlanPlayer(16, "Uncertain", "new", "MID", 5, 5, {1: 5.6}, xp_uncertainty=1.5))
+        args = dict(players=pool, initial_squad=list(range(1, 16)), gws=[1], budget=100,
+                    free_transfers=1, transfer_friction=0, ft_end_value=0, bench_weight=0)
+        risky = optimizer.plan_transfers(**args, risk_margin=0)
+        guarded = optimizer.plan_transfers(**args, risk_margin=.5)
+        self.assertEqual(risky.weeks[0].transfers_in, [16])
+        self.assertEqual(guarded.weeks[0].transfers_in, [])
 
 
 if __name__ == "__main__":

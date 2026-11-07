@@ -8,3 +8,6 @@ data/fixtures.json
 data/historical_3yr.json
 data/news_cache.json
 data/player_summaries.json
+data/historical/
+data/historical_features.npz
+data/snapshots/

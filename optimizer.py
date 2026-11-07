@@ -47,6 +47,7 @@ class PlanPlayer:
     xp_by_gw: Dict[int, float]  # expected points per gameweek (0 for blanks)
     ownership: float = 0.0
     haul_prob: float = 0.0
+    xp_uncertainty: float = 0.0  # conservative mean-estimate error proxy, not a confidence interval
 
 
 @dataclass
@@ -120,6 +121,7 @@ def _solve(
     time_limit: float,
     freeze_after_first: bool = False,
     transfer_friction: float = 0.0,
+    risk_margin: float = 0.5,
 ) -> Tuple[Optional[np.ndarray], _VarIndex, Dict[str, Any]]:
     P, T = len(players), len(gws)
     if not P or not T:
@@ -128,6 +130,8 @@ def _solve(
         raise ValueError("Free transfers must be between 0 and 5.")
     if ft_end_value < 0:
         raise ValueError("Terminal free-transfer value must be nonnegative.")
+    if risk_margin < 0 or transfer_friction < 0:
+        raise ValueError("Transfer risk and friction margins must be nonnegative.")
     V = _VarIndex(P, T)
     pid_to_idx = {pl.id: k for k, pl in enumerate(players)}
 
@@ -149,7 +153,11 @@ def _solve(
         if initial_squad is None and t == 0:
             continue
         for p in range(P):
-            cvec[V.pt("i", p, t)] += 1e-3 + transfer_friction * week_weights[t]
+            # A transfer must clear both its hit/friction cost and an estimation-risk
+            # margin for the incoming and outgoing players across the remaining horizon.
+            uncertainty_cost = risk_margin * players[p].xp_uncertainty * float(np.sqrt(sum(w*w for w in week_weights[t:])))
+            cvec[V.pt("i", p, t)] += 1e-3 + transfer_friction * week_weights[t] + uncertainty_cost
+            cvec[V.pt("o", p, t)] += uncertainty_cost
 
     # ---------------- constraints ----------------
     rows: List[int] = []
@@ -378,6 +386,7 @@ def plan_transfers(
     max_per_club: int = 3,
     time_limit: float = 45.0,
     transfer_friction: float = 1.5,
+    risk_margin: float = 0.5,
 ) -> Optional[TransferPlan]:
     """
     Multi-week transfer plan from `initial_squad` (list of player ids).
@@ -391,6 +400,7 @@ def plan_transfers(
         players, gws, list(initial_squad), budget, free_transfers, weights, bench_weight,
         ft_end_value, unlimited, max_per_club, (), (), None, time_limit,
         transfer_friction=transfer_friction,
+        risk_margin=risk_margin,
     )
     if x is None:
         return None
