@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Touchline — Fantasy Football Mission Control (web_app.py)
+PL Fantasy Predictor (web_app.py)
 
 Focused strictly on the Best £100m Squad of the Week before games start,
-with 1-click Variations and a clean Player Inspector when you click a card.
+with a score-target squad shuffle and a Player Inspector when you click a card.
 """
 
 from __future__ import annotations
@@ -22,8 +22,7 @@ from predictor import (
     OptimizedSquadResult,
     PlayerPrediction,
     build_transfer_plan,
-    get_best_squad_variations,
-    is_selectable,
+    get_shuffle_squads,
     predict_player,
 )
 
@@ -108,8 +107,8 @@ def build_web_payload() -> Dict[str, Any]:
     articles = load_all_news(SQUAD_CONFIG_PATH)
     all_preds = [predict_player(p, articles) for p in all_players]
 
-    variations_raw = get_best_squad_variations(all_preds, budget=100.0, num_variations=6)
-    variations_json = [
+    squads_raw = get_shuffle_squads(all_preds, budget=100.0, num_squads=120)
+    squads_json = [
         _serialize_squad_result(
             v.result,
             title=v.name,
@@ -117,21 +116,14 @@ def build_web_payload() -> Dict[str, Any]:
             total_cost=v.total_cost,
             budget=v.budget,
         )
-        for v in variations_raw
+        for v in squads_raw
     ]
-
-    healthy_active = sorted(
-        [p for p in all_preds if is_selectable(p, 0.6)],
-        key=lambda x: x.expected_points,
-        reverse=True,
-    )[:65]
-    healthy_pool_json = [_serialize_pred(p) for p in healthy_active]
 
     nn_net = get_or_train_neural_net(force_retrain=False)
 
     return {
-        "variations": variations_json,
-        "playerPool": healthy_pool_json,
+        "squads": squads_json,
+        "shuffle": {"defaultMinimum": min(55, max(0, int(squads_json[0]["expectedPoints"] - 1)))},
         "nnMetrics": nn_net.metrics,
         "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
@@ -227,8 +219,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Touchline — Matchday control</title>
-  <meta name="description" content="Fantasy football mission control: player projections, six squad configurations, transfer planning, and historical performance." />
+  <title>PL Fantasy Predictor</title>
+  <meta name="description" content="Premier League fantasy player projections, squad shuffling with a points target, transfer planning, and historical model performance." />
   <meta name="theme-color" content="#080e14" />
   <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -287,15 +279,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .section-label { display: flex; align-items: center; gap: 14px; }
     .section-number { font: 500 11px var(--mono); color: var(--accent); letter-spacing: 0; border: 1px solid var(--line-strong); padding: 3px 6px; }
     .section-hint { font: 10px var(--mono); color: var(--muted); }
-    .tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); background: var(--surface); margin-bottom: 20px; }
-    .tab { position: relative; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer; padding: 13px 14px; text-align: left; transition: background .15s; min-width: 0; }
-    .tab:last-child { border-right: 0; }
-    .tab:hover { background: var(--surface-2); }
-    .tab.active { background: #1b2d37; color: var(--text); box-shadow: inset 0 2px 0 var(--lime); }
-    .tab.active .t-number { color: var(--lime); opacity: 1; }
-    .t-number { font: 10px var(--mono); opacity: .8; display: block; margin-bottom: 6px; }
-    .t-name { display: block; font-weight: 600; font-size: 12px; }
-    .t-meta { display: block; font: 9px var(--mono); margin-top: 6px; color: var(--muted); }
+    .shuffle-controls { display: grid; grid-template-columns: auto 1fr; gap: 12px 28px; align-items: end; padding: 20px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 20px; }
+    .shuffle-target label { display: block; font: 10px var(--mono); color: var(--text-2); margin-bottom: 9px; }
+    .target-input { display: flex; align-items: center; gap: 9px; }
+    .target-input input { width: 96px; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 0; background: var(--bg); color: var(--text); font: 500 22px var(--mono); }
+    .target-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .target-input span { font: 11px var(--mono); color: var(--muted); }
+    .shuffle-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .shuffle-button, .reset-button { min-height: 48px; padding: 12px 18px; border: 1px solid var(--line-strong); cursor: pointer; font-size: 13px; font-weight: 600; }
+    .shuffle-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--lime); color: #18221a; border-color: var(--lime); }
+    .shuffle-button svg { width: 20px; height: 20px; flex-shrink: 0; }
+    .shuffle-button:hover { background: #eef5af; }
+    .reset-button { background: transparent; color: var(--text-2); }
+    .reset-button:hover { background: var(--surface-2); color: var(--text); }
+    .shuffle-button:disabled { opacity: .45; cursor: not-allowed; }
+    #shuffle-help, #shuffle-status { grid-column: 1 / -1; font-size: 11px; line-height: 1.6; color: var(--muted); }
+    #shuffle-status { color: var(--accent); min-height: 18px; }
     .kpis { display: grid; grid-template-columns: 1.05fr 1.2fr .8fr 1fr; margin-bottom: 20px; padding: 18px 0; background: #0e1821b3; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     .kpi { min-width: 0; padding: 0 24px; border-left: 1px solid var(--line); }
     .kpi:first-child { border-left: 0; }
@@ -406,7 +405,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .container { padding: 0 24px; }
       .main-grid { grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; }
       .scout-panel { padding: 18px; }
-      .tab { padding: 12px 10px; }
       .kpi { padding: 0 16px; }
       .k-value { font-size: 29px; }
       .p-team { display: none; }
@@ -424,25 +422,27 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .main-grid { grid-template-columns: minmax(0, 1fr); }
       .side { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; }
       .verdict-panel { padding-top: 12px; }
-      .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .tab:nth-child(3) { border-right: 0; }
-      .tab:nth-child(n+4) { border-top: 1px solid var(--line); }
-      .t-number { display: inline; margin-right: 6px; }
-      .t-name { display: inline; }
       .lower { gap: 24px; }
       .lower .panel + .panel { padding-left: 24px; }
       .price-tag, .p-team { display: block; }
       .p-team { display: inline; }
     }
     @media (max-width: 600px) {
+      .shuffle-controls { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 14px; }
+      .shuffle-actions { gap: 8px; }
+      .shuffle-button, .reset-button { flex: 1; padding: 12px 10px; font-size: 11px; }
+      .shuffle-target { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+      .shuffle-target label { margin: 0; max-width: 130px; line-height: 1.6; }
+      .target-input input { width: 82px; }
+
       .container { padding: 0 16px; }
-      .topbar { padding: 20px 0 16px; gap: 15px; }
+      .topbar { padding: 20px 0 16px; gap: 18px; flex-wrap: wrap; }
       .wordmark { font-size: 26px; letter-spacing: 1.6px; }
       .brand-mark { width: 30px; height: 34px; }
       .brand { gap: 8px; }
       .brand-caption { font-size: 8px; letter-spacing: .7px; }
       .top-nav { gap: 12px; font-size: 9px; letter-spacing: 0; }
-      .top-nav a:first-child { display: none; }
+      .top-nav { width: 100%; justify-content: space-between; }
       .intro { display: block; padding: 26px 0 24px; }
       h1 { font-size: clamp(38px, 10.5vw, 56px); letter-spacing: .5px; }
       .intro-copy { font-size: 12px; max-width: 320px; }
@@ -456,11 +456,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .ticket-info .eyebrow { margin-bottom: 2px; font-size: 8px; }
       .section-label { font-size: 9px; gap: 8px; letter-spacing: .7px; }
       .section-hint { font-size: 8px; text-align: right; }
-      .tabs { margin-bottom: 20px; }
-      .tab { padding: 12px 9px; }
-      .t-name { font-size: 11px; }
-      .t-number { font-size: 10px; }
-      .t-meta { font-size: 9px; }
       .kpis { grid-template-columns: 1fr 1fr; gap: 16px 0; }
       .kpi { padding: 0 14px; }
       .kpi:nth-child(3) { border-left: 0; }
@@ -501,20 +496,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <a class="skip-link" href="#selection">Skip to the squad</a>
   <div class="container">
     <header class="topbar">
-      <a class="brand" href="#" aria-label="Touchline home">
+      <a class="brand" href="#" aria-label="PL Fantasy Predictor home">
         <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M1 12V1h11M36 1h11v11M47 36v11H36M12 47H1V36" stroke="currentColor"/><circle cx="24" cy="24" r="14" stroke="currentColor"/><ellipse cx="24" cy="24" rx="23" ry="8" transform="rotate(-38 24 24)" stroke="currentColor"/><path d="m24 17 7 5-3 8h-8l-3-8Z" fill="currentColor"/><circle cx="41" cy="10" r="2" fill="var(--lime)"/></svg>
-        <div><div class="wordmark">Touchline</div><div class="brand-caption">Fantasy football operations</div></div>
+        <div><div class="wordmark">PL Fantasy Predictor</div><div class="brand-caption">Player forecasts &amp; squad planning</div></div>
       </a>
       <nav class="top-nav" aria-label="Page sections"><a href="#selection">Squad</a><a href="#moves">Transfers</a><a href="#evidence">Performance</a></nav>
-      <span class="edition" id="edition">Gameweek briefing</span>
+      <span class="edition" id="edition">Upcoming gameweek</span>
     </header>
 
     <main>
       <div class="intro">
         <div>
-          <p class="eyebrow">FPL / Mission control</p>
-          <h1>Matchday <span>control</span></h1>
-          <p class="intro-copy">Player forecasts. Squad configurations. Transfer planning.<br>Your next gameweek, from every angle.</p>
+          <p class="eyebrow">Premier League / Fantasy football</p>
+          <h1>Find your <span>next squad</span></h1>
+          <p class="intro-copy">Explore different £100m teams and compare their predicted points.<br>Shuffle for another squad above your target.</p>
         </div>
         <svg class="orbital-mark" viewBox="0 0 260 260" fill="none" aria-hidden="true"><circle cx="130" cy="130" r="68" stroke="currentColor"/><circle cx="130" cy="130" r="86" stroke="currentColor" stroke-dasharray="2 8"/><ellipse cx="130" cy="130" rx="124" ry="37" transform="rotate(-35 130 130)" stroke="currentColor"/><path d="M130 12V32M130 228V248M12 130H32M228 130H248M120 130H140M130 120V140" stroke="currentColor"/><circle cx="221" cy="64" r="4" fill="currentColor"/></svg>
         <div class="fixture-ticket" aria-label="Upcoming gameweek deadline">
@@ -524,8 +519,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
 
       <section id="selection" aria-labelledby="selection-label">
-        <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> Squad configurations</h2><span class="section-hint">06 options / £100m budget</span></div>
-        <div class="tabs" id="tabs" role="group" aria-label="Squad approaches"></div>
+        <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> Squad shuffle</h2><span class="section-hint">15 players / £100m budget</span></div>
+        <div class="shuffle-controls">
+          <div class="shuffle-target"><label for="minimum-points">Minimum predicted points</label><div class="target-input"><input id="minimum-points" type="number" min="0" step="0.1" value="55" inputmode="decimal" aria-describedby="shuffle-help shuffle-status" /><span>xP</span></div></div>
+          <div class="shuffle-actions"><button type="button" class="shuffle-button" id="shuffle-button" aria-controls="squad-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3M17 14l4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3M17 2l4 4-4 4"/></svg>Shuffle squad</button><button type="button" class="reset-button" id="top-squad-button" aria-controls="squad-view">Top projected squad</button></div>
+          <p id="shuffle-help">Find another team at or above your target. Predicted points include the captain; actual results will vary.</p>
+          <p id="shuffle-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        </div>
         <div id="squad-view">
           <div class="kpis" aria-live="polite" aria-atomic="true">
             <div class="kpi"><div class="k-label">Projected XI points</div><div class="k-value accent" id="kpi-xp">–</div><div class="k-sub" id="kpi-xp-sub"></div></div>
@@ -543,28 +543,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
               <div class="bench"><div class="bench-title">The bench · in auto-sub order</div><div class="pitch-row" id="row-bench" role="group" aria-label="Substitutes"></div></div>
             </div>
             <aside class="side" aria-label="Scouting notes">
-              <div class="panel scout-panel"><h3><span class="panel-kicker">Player intelligence</span>Scouting report</h3><div id="player-inspector" aria-live="polite"></div></div>
-              <div class="panel verdict-panel"><h3>Selection briefing</h3><div class="verdict" id="verdict"></div></div>
+              <div class="panel scout-panel"><h3><span class="panel-kicker">Selected player</span>Player projection</h3><div id="player-inspector" aria-live="polite"></div></div>
+              <div class="panel verdict-panel"><h3>About this squad</h3><div class="verdict" id="verdict"></div></div>
             </aside>
           </div>
         </div>
       </section>
 
       <section class="moves-section" id="moves" aria-labelledby="moves-label">
-        <div class="section-head"><h2 class="section-label" id="moves-label"><span class="section-number">02</span> Transfer sequence</h2><span class="section-hint">Multi-gameweek planning</span></div>
+        <div class="section-head"><h2 class="section-label" id="moves-label"><span class="section-number">02</span> Transfer plan</h2><span class="section-hint">Multi-gameweek planning</span></div>
         <div id="plan-box"></div>
       </section>
 
       <section class="evidence-section" id="evidence" aria-labelledby="evidence-label">
         <div class="section-head"><h2 class="section-label" id="evidence-label"><span class="section-number">03</span> Performance analysis</h2><span class="section-hint">Prediction / observation</span></div>
-        <div class="evidence-intro"><h2>Mission debrief</h2><p id="brand-sub">Historical training. Out-of-sample results.</p></div>
+        <div class="evidence-intro"><h2>Model performance</h2><p id="brand-sub">Historical training. Out-of-sample results.</p></div>
         <div class="lower">
           <div class="panel"><h3><span class="panel-kicker">Player-level evaluation</span>Prediction accuracy</h3><div id="model-box"></div></div>
           <div class="panel"><h3><span class="panel-kicker">Squad-level evaluation</span>Strategy performance</h3><div id="backtest-box"></div></div>
         </div>
       </section>
     </main>
-    <footer class="site-footer"><span class="footer-brand">Touchline / FPL</span><p id="footer"></p></footer>
+    <footer class="site-footer"><span class="footer-brand">PL Fantasy Predictor</span><p id="footer"></p></footer>
   </div>
   <div class="tooltip" id="tooltip" role="tooltip"></div>
 
@@ -593,10 +593,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       CRY: { body: "#1B458F", sleeve: "#C4122E", stripe: "#C4122E" },
       IPS: { body: "#3A64A3", sleeve: "#FFFFFF", stripe: null }
     };
-    const TAB_NAMES = ["This week", "5-GW run", "No premiums", "Fortress", "Differentials", "Strong bench"];
     const COLORS = { model: "#7bd6ad", avg: "#8dbbff", naive: "#d5b265" };
 
-    let currentVarIdx = 0;
+    let currentSquadIdx = 0;
+    const seenSquads = new Set([0]);
     let selectedPlayerId = null;
     const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const f1 = (x) => (x === null || x === undefined) ? "–" : Number(x).toFixed(1);
@@ -623,7 +623,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     const PLAYER_INDEX = {};
     function registerPlayers(list) { list.forEach(p => { PLAYER_INDEX[p.id] = p; }); }
-    DATA.variations.forEach(v => { registerPlayers(v.starters); registerPlayers(v.bench); });
+    DATA.squads.forEach(v => { registerPlayers(v.starters); registerPlayers(v.bench); });
 
     function createCardHtml(p, subLabel = null) {
       const capHtml = p.isCaptain ? `<span class="cap-badge" title="Captain">C</span>` : (p.isVice ? `<span class="cap-badge vice" title="Vice-captain">V</span>` : "");
@@ -673,7 +673,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function renderSquadView(squad) {
-      // Captain, vice-captain and doubled points belong to this variation.
+      // Captain, vice-captain and doubled points belong to the selected squad.
       registerPlayers(squad.starters);
       registerPlayers(squad.bench);
       const starters = squad.starters;
@@ -688,8 +688,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById("kpi-form-sub").textContent = `bench ${benchXp.toFixed(1)} xP`;
       document.getElementById("kpi-cost").textContent = `£${squad.totalCost.toFixed(1)}m`;
       document.getElementById("kpi-cost-sub").textContent = `of £${squad.budget.toFixed(1)}m · £${(squad.budget - squad.totalCost).toFixed(1)}m in bank`;
-      document.getElementById("squad-title").textContent = TAB_NAMES[currentVarIdx] || "The starting XI";
-      document.getElementById("verdict").innerHTML = `<p><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p><details><summary>How this squad was selected</summary><div class="caveat">${(squad.optimizationNotes || []).map(esc).join("<br>")}</div></details>`;
+      document.getElementById("squad-title").textContent = currentSquadIdx === 0 ? "Top projected squad" : "Shuffled squad";
+      document.getElementById("verdict").innerHTML = `<p><strong>${esc(squad.title)}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p><details><summary>How this squad was selected</summary><div class="caveat">${(squad.optimizationNotes || []).map(esc).join("<br>")}</div></details>`;
 
       const byPos = (pos) => starters.filter(p => p.pos === pos).map(p => createCardHtml(p)).join("");
       document.getElementById("row-gkp").innerHTML = byPos("GKP");
@@ -700,24 +700,72 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       inspectPlayer(cap.id);
     }
 
-    function renderTabs() {
-      document.getElementById("tabs").innerHTML = DATA.variations.map((v, i) => `
-        <button type="button" class="tab ${i === currentVarIdx ? "active" : ""}" aria-pressed="${i === currentVarIdx}" aria-controls="squad-view" onclick="selectVariation(${i})" title="${esc(v.subtitle)}">
-          <span class="t-number">0${i + 1}</span>
-          <span class="t-name">${esc(TAB_NAMES[i] || v.title)}</span>
-          <span class="t-meta">${v.formation} · ${v.expectedPoints.toFixed(1)} xP</span>
-        </button>`).join("");
+    function matchingSquads() {
+      const input = document.getElementById("minimum-points");
+      const minimum = input.valueAsNumber;
+      if (!input.validity.valid || !Number.isFinite(minimum) || minimum < 0) return null;
+      return DATA.squads.map((s, i) => i).filter(i => DATA.squads[i].expectedPoints >= minimum);
     }
-    function selectVariation(i) {
-      currentVarIdx = i;
-      // Preserve keyboard focus instead of replacing the clicked button.
-      if (!document.getElementById("tabs").children.length) renderTabs();
-      document.querySelectorAll(".tab").forEach((el, n) => {
-        el.classList.toggle("active", n === i);
-        el.setAttribute("aria-pressed", String(n === i));
-      });
-      renderSquadView(DATA.variations[i]);
+
+    function updateShuffleStatus(message = "") {
+      const choices = matchingSquads();
+      const button = document.getElementById("shuffle-button");
+      const status = document.getElementById("shuffle-status");
+      if (choices === null) {
+        button.disabled = true;
+        status.textContent = "Enter a valid points target of zero or more.";
+        return;
+      }
+      const others = choices.filter(i => i !== currentSquadIdx);
+      button.disabled = !others.length;
+      if (!choices.length) {
+        status.textContent = `No saved squad reaches that target. The highest projection here is ${DATA.squads[0].expectedPoints.toFixed(1)} xP. Lower the target or view the top projected squad.`;
+      } else if (!others.length) {
+        status.textContent = `Only the current squad meets this target. Lower it to find a different team.`;
+      } else {
+        const meetsTarget = choices.includes(currentSquadIdx);
+        status.textContent = `${message ? message + " " : ""}${choices.length} of ${DATA.squads.length} generated squads meet your target.${meetsTarget ? "" : " The current squad is below the target; shuffle to replace it."}`;
+      }
     }
+
+    function selectSquad(i) {
+      currentSquadIdx = i;
+      seenSquads.add(i);
+      renderSquadView(DATA.squads[i]);
+    }
+
+    function shuffleSquad() {
+      const eligible = matchingSquads();
+      if (!eligible) { updateShuffleStatus(); return; }
+      const others = eligible.filter(i => i !== currentSquadIdx);
+      if (!others.length) { updateShuffleStatus(); return; }
+      let options = others.filter(i => !seenSquads.has(i));
+      let restarted = false;
+      if (!options.length) {
+        seenSquads.clear();
+        seenSquads.add(currentSquadIdx);
+        options = others;
+        restarted = true;
+      }
+      const previous = new Set(DATA.squads[currentSquadIdx].starters.map(p => p.id));
+      const changedCount = i => DATA.squads[i].starters.filter(p => !previous.has(p.id)).length;
+      // Prefer a visibly different XI, without repeating a team before the pool is exhausted.
+      const diverse = options.filter(i => changedCount(i) >= 2);
+      if (diverse.length) options = diverse;
+      const chosen = options[Math.floor(Math.random() * options.length)];
+      const changed = changedCount(chosen);
+      selectSquad(chosen);
+      const gap = Math.max(0, DATA.squads[0].expectedPoints - DATA.squads[chosen].expectedPoints);
+      updateShuffleStatus(`${restarted ? "All matching squads seen; starting another round. " : ""}${changed} starter${changed === 1 ? "" : "s"} changed · ${gap.toFixed(1)} xP below the top squad.`);
+    }
+
+    document.getElementById("minimum-points").value = DATA.shuffle.defaultMinimum;
+    document.getElementById("minimum-points").addEventListener("input", () => updateShuffleStatus());
+    document.getElementById("shuffle-button").addEventListener("click", shuffleSquad);
+    document.getElementById("top-squad-button").addEventListener("click", () => {
+      selectSquad(0);
+      updateShuffleStatus("Showing the highest projected squad in this sample.");
+    });
 
     /* ---------- meta ---------- */
     (function renderMeta() {
@@ -847,7 +895,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     document.getElementById("footer").textContent = "Expected points = P(60+ minutes) × points given a start + P(cameo) × cameo points. Availability uses the learned minutes model and official FPL flags; headlines are informational only.";
 
-    selectVariation(0);
+    selectSquad(0);
+    updateShuffleStatus();
   </script>
 </body>
 </html>
@@ -868,7 +917,7 @@ def serve_app(port: int = 8000) -> None:
     generate_index_html()
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", port), handler) as httpd:
-        print(f"Serving Touchline at http://localhost:{port}/index.html")
+        print(f"Serving PL Fantasy Predictor at http://localhost:{port}/index.html")
         httpd.serve_forever()
 
 

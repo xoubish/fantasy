@@ -69,6 +69,15 @@ even when they are not eligible purchase candidates.
 
 ## Setup and commands
 
+The **PL Fantasy Predictor** page offers a squad shuffle with an adjustable minimum
+projected score (normally 55 points), plus a button to return to the top projected
+squad. Each build samples up to 120 distinct starting XIs, within five points of
+the initial optimized squad. Random player swaps respect the £100m budget, club
+limits and squad composition; the best legal XI and captain are scored using the
+unchanged predictions. This is a bounded shortlist, not every possible team.
+The page draws from qualifying teams without repetition until the matching pool
+has been seen. Projections include the captain, but no bench or automatic-sub bonuses.
+
 Requires Python 3.10+, `numpy`, `scipy` and `pillow`.
 
 ```bash

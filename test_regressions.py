@@ -3,6 +3,8 @@ import json
 import gzip
 import tempfile
 import unittest
+from collections import Counter
+from itertools import combinations
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +20,7 @@ import optimizer
 import predictor
 import historical_data
 import historical_training
+import squad_shuffle
 from news_scraper import NewsArticle
 
 
@@ -27,6 +30,56 @@ def players():
     return [optimizer.PlanPlayer(i, str(i), f"club{i // 2}", pos, 5, 5,
                                 {gw: xp for gw in range(1, 5)})
             for i, (pos, xp) in enumerate(zip(positions, scores), 1)]
+
+
+class ShuffleTests(unittest.TestCase):
+    def test_fixed_squad_score_matches_exhaustive_lineup_and_captain_search(self):
+        pool = players()
+        pool[4] = replace(pool[4], xp_by_gw={1: 12.25})
+        pool[8] = replace(pool[8], xp_by_gw={1: 7.13})
+        result = squad_shuffle.score_squad(pool, 1)
+        possible = []
+        for xi in combinations(pool, 11):
+            counts = Counter(p.position for p in xi)
+            if all(optimizer.XI_MIN[pos] <= counts[pos] <= optimizer.XI_MAX[pos] for pos in optimizer.POS_ORDER):
+                possible.append(sum(p.xp_by_gw[1] for p in xi) + max(p.xp_by_gw[1] for p in xi))
+        self.assertEqual(result.expected_points, round(max(possible), 2))
+        self.assertIn(result.captain_id, result.lineup_ids)
+        self.assertNotEqual(result.captain_id, result.vice_id)
+        self.assertEqual(len(result.bench_order), 4)
+        self.assertEqual(next(p.position for p in pool if p.id == result.bench_order[-1]), "GKP")
+
+    def test_sampled_squads_are_legal_distinct_and_use_original_scores(self):
+        pool = players()
+        pool += [replace(p, id=p.id + 20, team="extras" if p.id % 2 else "other",
+                         price=6, xp_by_gw={1: p.xp_by_gw[1] - .4}) for p in list(pool)]
+        before = [dict(p.xp_by_gw) for p in pool]
+        results = squad_shuffle.generate_shuffle_pool(pool, 1, budget=80, count=16, seed=19)
+        self.assertEqual(len(results), 16)
+        self.assertEqual(len({tuple(sorted(w.lineup_ids)) for w in results}), 16)
+        by_id = {p.id: p for p in pool}
+        for week in results:
+            squad = [by_id[i] for i in week.squad_ids]
+            self.assertEqual(Counter(p.position for p in squad), optimizer.SQUAD_SLOTS)
+            self.assertLessEqual(sum(p.price for p in squad), 80)
+            self.assertLessEqual(max(Counter(p.team for p in squad).values()), 3)
+            xi = [by_id[i] for i in week.lineup_ids]
+            self.assertEqual(len(xi), 11)
+            for pos in optimizer.POS_ORDER:
+                n = sum(p.position == pos for p in xi)
+                self.assertTrue(optimizer.XI_MIN[pos] <= n <= optimizer.XI_MAX[pos])
+            self.assertEqual(week.expected_points, round(sum(p.xp_by_gw[1] for p in xi) + by_id[week.captain_id].xp_by_gw[1], 2))
+        self.assertEqual(before, [p.xp_by_gw for p in pool])
+        repeated = squad_shuffle.generate_shuffle_pool(pool, 1, budget=80, count=16, seed=19)
+        self.assertEqual([w.lineup_ids for w in results], [w.lineup_ids for w in repeated])
+
+    def test_small_pool_exhaustion_and_impossible_budget_are_bounded(self):
+        result = squad_shuffle.generate_shuffle_pool(players(), 1, count=12, max_attempts=20)
+        self.assertEqual(len(result), 1)
+        with self.assertRaisesRegex(RuntimeError, "No valid squad"):
+            squad_shuffle.generate_shuffle_pool(players(), 1, budget=1, max_attempts=0)
+        with self.assertRaisesRegex(ValueError, "unique"):
+            squad_shuffle.generate_shuffle_pool(players() + [players()[0]], 1)
 
 
 class DataTests(unittest.TestCase):

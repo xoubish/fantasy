@@ -437,6 +437,33 @@ class SquadVariation:
     budget: float
 
 
+def get_shuffle_squads(all_predictions: List[PlayerPrediction], budget: float = 100.0,
+                       num_squads: int = 120) -> List[SquadVariation]:
+    """A sampled library of distinct, high-scoring XIs for the web shuffler."""
+    from squad_shuffle import generate_shuffle_pool
+
+    eligible = [p for p in all_predictions if is_selectable(p, .2)]
+    by_id = {p.player.id: p for p in eligible}
+    weeks = generate_shuffle_pool(to_plan_players(eligible), _target_gw(eligible), budget, num_squads)
+    squads = []
+    for i, week in enumerate(weeks):
+        result = _result_from_week_plan(week, by_id)
+        result.tactical_notes = [
+            f"15 players, £{budget:.1f}m budget, at most three per club; legal XI and captain.",
+            "Random player swaps generate alternatives; the original model scores are never randomized. "
+            "For each squad, the best legal XI and captain are selected using this gameweek's projections.",
+            f"This is a bounded sample from {week.candidate_count} shortlisted players, not every possible team. "
+            "The initial squad maximizes projected XI plus captain points within that shortlist; alternatives stay within five points of it.",
+            "Points are XI plus the extra captain score, with no bench, automatic-substitution or vice-captain bonus added. "
+            "These are fresh £100m squads, not transfers from your existing team.",
+        ]
+        cost = round(sum(by_id[pid].player.price for pid in week.squad_ids), 1)
+        squads.append(SquadVariation(i + 1, "Top projected squad" if i == 0 else "Shuffled squad",
+                                     "A fresh £100m squad for this gameweek. Captain points included.",
+                                     result, cost, budget))
+    return squads
+
+
 def get_best_squad_variations(
     all_predictions: Optional[List[PlayerPrediction]] = None,
     budget: float = 100.0,
