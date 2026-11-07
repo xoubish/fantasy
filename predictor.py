@@ -16,11 +16,13 @@ import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from fpl_data import PlayerRecord
+from ai_coach import CoachDecision, evaluate_squad_with_ai_coach
+from fpl_data import PlayerRecord, load_players
 from neural_model import extract_features, get_or_train_neural_net
 from news_scraper import NewsArticle, PlayerNewsAssessment, analyze_player_news
 
 _CACHED_NN = None
+_CACHED_COACH: Optional[Dict[int, CoachDecision]] = None
 
 
 def _get_nn():
@@ -28,6 +30,14 @@ def _get_nn():
     if _CACHED_NN is None:
         _CACHED_NN = get_or_train_neural_net(force_retrain=False)
     return _CACHED_NN
+
+
+def _get_coach_decisions(articles: List[NewsArticle]) -> Dict[int, CoachDecision]:
+    global _CACHED_COACH
+    if _CACHED_COACH is None:
+        all_p = load_players()
+        _CACHED_COACH = evaluate_squad_with_ai_coach(all_p, articles)
+    return _CACHED_COACH
 
 # Official FPL Scoring Rules by Position
 GOAL_POINTS = {"GKP": 10.0, "DEF": 6.0, "MID": 5.0, "FWD": 4.0}
@@ -62,23 +72,29 @@ class PlayerPrediction:
     concede_2plus_prob: float
     expected_goals: float
     expected_assists: float
-    rule_xp_90: float  # Official FPL Rule Engine 90-min prediction
-    nn_xp_90: float  # Supervised Neural Network (14->24->12->1) 90-min prediction
-    xp_if_90: float  # Hybrid Ensemble 90-min prediction
-    expected_points: float  # News-adjusted final xP
+    rule_xp_90: float  # Official FPL Rule Engine 90-min reference
+    nn_xp_90: float  # Dual-Head Neural Network (22->40->20->2) 90-min prediction
+    xp_if_90: float  # Neural Net + AI Head Coach 90-min prediction
+    expected_points: float  # News-adjusted final xP for upcoming GW
+    haul_prob: float  # Explosive Haul Probability P(Points >= 9 / Double-Digit Ceiling)
+    horizon_3gw_xp: float  # Time-decayed 3-Gameweek Expected Points (GW t, t+1, t+2)
+    role_tag: str  # AI Tactical Head Coach Archetype
+    coach_note: str  # AI Tactical Head Coach 1-sentence briefing
     floor_points: int
     ceiling_points: int
-    lineup_score: float  # penalizes high 1-pt cameo risk when picking Starting XI
+    lineup_score: float  # penalizes high 1-pt cameo risk + rewards 3-GW horizon & ceiling
 
 
 def predict_player(
     player: PlayerRecord, articles: List[NewsArticle]
 ) -> PlayerPrediction:
     """
-    Calculates a player's Expected Points (xP), floor, ceiling, and clean sheet probability
-    for the upcoming Gameweek.
+    Calculates a player's Expected Points (xP), 3-GW Horizon xP, Explosive Haul Probability,
+    AI Tactical Head Coach briefing, floor, ceiling, and clean sheet probability.
     """
     news = analyze_player_news(player, articles)
+    coach_map = _get_coach_decisions(articles)
+    coach = coach_map.get(player.id)
 
     # 1. Poisson model for expected goals conceded (lambda_gc)
     home_def_factor = 0.88 if player.is_home else 1.12
@@ -107,7 +123,7 @@ def predict_player(
     exp_g = (player.xg_per_90 + pen_boost) * match_att_mult
     exp_a = (player.xa_per_90 + corner_boost) * match_att_mult
 
-    # 3. Calculate 90-minute Expected Points from Official FPL Scoring Rules:
+    # 3. Calculate 90-minute Expected Points from Official FPL Scoring Rules (diagnostic reference):
     appearance_pts = APPEARANCE_60PLUS_PTS
     cs_pts = cs_prob * CS_POINTS[player.position]
     gc_penalty = (
@@ -122,7 +138,6 @@ def predict_player(
     )
     save_pts = expected_saves / 3.0
     attack_pts = exp_g * GOAL_POINTS[player.position] + exp_a * ASSIST_POINTS
-    # 2025/26+ FPL Defensive Contribution (CBIT + tackles + recoveries) bonus expectation
     def_contrib_pts = (
         min(1.6, max(0.0, (player.defensive_contribution_per_90 - 5.0) * 0.22))
         if player.position in ("DEF", "MID")
@@ -137,7 +152,6 @@ def predict_player(
         else (YELLOW_CARD_PTS * 0.08 if player.position == "FWD" else 0.0)
     )
 
-    # Expected Bonus Points (BPS: 1 to 3 pts awarded to top 3 BPS players in match)
     bps_base = max(0.0, (player.bps_per_90 - 14.0) / 10.0)
     fixture_bps_boost = 0.35 if player.fixture_difficulty <= 2 else 0.0
     bonus_pts = min(1.8, bps_base + fixture_bps_boost)
@@ -154,24 +168,57 @@ def predict_player(
         + bonus_pts
     )
 
-    # 4. End-to-End 22-Feature Supervised Neural Network (22 -> 36 -> 18 -> 1)
-    # Trained directly on real 2026/27 Premier League match logs!
+    # 4. Dual-Head 22-Feature Supervised Neural Network (22 -> 40 -> 20 -> 2)
+    # Head 1: Expected Points (xP) | Head 2: Explosive Haul Probability P(Points >= 9)
     nn_model = _get_nn()
-    nn_90_xp = nn_model.predict(extract_features(player))
-    blended_90_xp = nn_90_xp
-    rule_90_xp = raw_90_xp  # kept purely as a reference diagnostic in the UI inspector
+    nn_90_xp, nn_haul_prob = nn_model.predict_both(extract_features(player))
+
+    # Apply AI Tactical Head Coach contextual adjustment
+    tactical_delta = coach.tactical_xp_delta if coach else 0.0
+    haul_boost = coach.haul_prob_boost if coach else 0.0
+    horizon_bonus = coach.horizon_3gw_bonus if coach else 0.0
+    role_tag = coach.role_tag if coach else "STARTER"
+    coach_note = coach.coach_note if coach else f"3-GW schedule: {player.fixture_run_3gw}"
+
+    blended_90_xp = max(1.0, nn_90_xp + tactical_delta)
+    rule_90_xp = raw_90_xp
 
     # 5. Apply News / Press Conference Start & Cameo Probabilities
-    # If a player starts (60+ mins) -> blended_90_xp; if cameo (<60 mins) -> 1.0 pt; if 0 mins -> 0.0 pt
     expected_pts = (
         news.start_probability * blended_90_xp
         + news.cameo_probability * APPEARANCE_CAMEO_PTS
     )
+    final_haul_prob = round(
+        max(0.01, min(0.85, (nn_haul_prob + haul_boost) * news.start_probability)),
+        2,
+    )
 
-    # Lineup selection score: penalize players with high 1-point cameo risk because
-    # a 1-point cameo blocks a healthy 2-3 pt bench player from auto-subbing in.
+    # 6. Multi-Gameweek 3-GW Rolling Horizon Evaluation (GW t, GW t+1, GW t+2)
+    horizon_weights = [1.0, 0.75, 0.55]
+    up3 = player.upcoming_3gw_fixtures[:3]
+    if up3:
+        gw_xps: List[float] = []
+        for idx, fix_ov in enumerate(up3):
+            w_h = horizon_weights[idx] if idx < len(horizon_weights) else 0.5
+            if idx == 0:
+                gw_xps.append(w_h * expected_pts)
+            else:
+                fut_xp90, _ = nn_model.predict_both(extract_features(player, fixture_override=fix_ov))
+                fut_xp = news.start_probability * max(1.0, fut_xp90 + tactical_delta * 0.7) + news.cameo_probability
+                gw_xps.append(w_h * fut_xp)
+        horizon_3gw_xp = sum(gw_xps) + horizon_bonus
+    else:
+        horizon_3gw_xp = expected_pts * 2.3 + horizon_bonus
+
+    # Lineup selection score: blends immediate GW xP with 3-GW horizon & explosive ceiling,
+    # while penalizing 1-point cameo traps.
     cameo_trap_penalty = 1.25 if news.risk_level == "CAMEO_ROTATION_RISK" else 0.0
-    lineup_score = expected_pts - cameo_trap_penalty
+    lineup_score = (
+        0.78 * expected_pts
+        + 0.22 * (horizon_3gw_xp / 2.3)
+        + 0.65 * final_haul_prob
+        - cameo_trap_penalty
+    )
 
     # Floor & Ceiling estimates
     if news.risk_level == "INJURED_OR_OUT":
@@ -190,7 +237,8 @@ def predict_player(
         ceiling_pts = int(
             round(
                 blended_90_xp
-                + (6.0 if player.position in ("MID", "FWD") else 4.5)
+                + (7.5 * final_haul_prob)
+                + (5.0 if player.position in ("MID", "FWD") else 3.8)
             )
         )
 
@@ -205,6 +253,10 @@ def predict_player(
         nn_xp_90=round(nn_90_xp, 2),
         xp_if_90=round(blended_90_xp, 2),
         expected_points=round(expected_pts, 2),
+        haul_prob=final_haul_prob,
+        horizon_3gw_xp=round(max(0.0, horizon_3gw_xp), 1),
+        role_tag=role_tag,
+        coach_note=coach_note,
         floor_points=floor_pts,
         ceiling_points=ceiling_pts,
         lineup_score=round(lineup_score, 2),
@@ -291,9 +343,11 @@ def optimize_starting_xi(
         reverse=True,
     )
 
-    # Pick Captain & Vice-Captain by highest expected_points in Starting XI
+    # Pick Captain & Vice-Captain by Expected Points + Explosive Haul Ceiling (P(Points >= 9))
     ranked_cap = sorted(
-        starting_xi, key=lambda p: p.expected_points, reverse=True
+        starting_xi,
+        key=lambda p: p.expected_points + 1.8 * p.haul_prob,
+        reverse=True,
     )
     captain = ranked_cap[0]
     vice_captain = ranked_cap[1]

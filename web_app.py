@@ -62,6 +62,11 @@ def _serialize_pred(p: PlayerPrediction, is_cap: bool = False, is_vice: bool = F
         "ruleXp": round(p.rule_xp_90, 1),
         "xp": round(p.expected_points, 1),
         "displayXp": round(p.expected_points * 2 if is_cap else p.expected_points, 1),
+        "haulProb": int(round(p.haul_prob * 100)),
+        "horizon3GwXp": round(p.horizon_3gw_xp, 1),
+        "fixtureRun3Gw": p.player.fixture_run_3gw,
+        "roleTag": p.role_tag,
+        "coachNote": p.coach_note,
         "floor": p.floor_points * 2 if is_cap else p.floor_points,
         "ceiling": p.ceiling_points * 2 if is_cap else p.ceiling_points,
         "inDreamteam": p.player.in_dreamteam,
@@ -742,13 +747,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           ${p.fullName} (${p.teamName}) — £${p.price.toFixed(1)}m
         </div>
         <div style="color:var(--fpl-green);font-weight:700;margin-bottom:8px;">
-          Fixture: ${p.opponent} | Projected: ${p.displayXp.toFixed(1)} xP (Range: ${p.floor}–${p.ceiling} pts)
+          GW Fixture: ${p.opponent} | Projected: ${p.displayXp.toFixed(1)} xP (Range: ${p.floor}–${p.ceiling} pts)
         </div>
-        <div>• <strong>🧠 Neural Net 90m:</strong> ${p.nnXp.toFixed(1)}p | <strong>📐 Rule Diagnostic:</strong> ${p.ruleXp.toFixed(1)}p</div>
+        <div>• <strong>🚀 Explosive Haul Ceiling (9+ pts):</strong> ${p.haulProb}% | <strong>📅 3-GW Horizon xP:</strong> ${p.horizon3GwXp.toFixed(1)}p (${p.fixtureRun3Gw})</div>
+        <div>• <strong>🧠 Dual-Head NN 90m:</strong> ${p.nnXp.toFixed(1)}p | <strong>📐 Rule Diagnostic:</strong> ${p.ruleXp.toFixed(1)}p</div>
         <div>• <strong>2026/27 PPG:</strong> ${p.seasonPpg.toFixed(1)} (Form: ${p.form} | Value: ${p.valueSeason.toFixed(1)} pts/£m)</div>
-        <div>• <strong>CBIT Def. Contrib/90:</strong> ${p.defContrib90.toFixed(1)} | <strong>3-Yr Pedigree PPG:</strong> ${p.ppg3Yr.toFixed(1)}</div>
-        <div>• <strong>Clean Sheet Odds:</strong> ${p.csProb}% | <strong>Concede 2+ Goals Risk:</strong> ${p.gc2Prob}%</div>
+        <div>• <strong>CBIT Def. Contrib/90:</strong> ${p.defContrib90.toFixed(1)} | <strong>Clean Sheet Odds:</strong> ${p.csProb}% (2+GC Risk: ${p.gc2Prob}%)</div>
         <div>• <strong>Start Probability:</strong> ${p.startProb}% | <strong>1-Pt Cameo Risk:</strong> ${p.cameoProb}%</div>
+        <div style="margin-top:6px;padding:6px 8px;background:rgba(0,255,135,0.12);border-left:3px solid var(--fpl-green);border-radius:4px;">
+          <strong>🤖 AI Head Coach:</strong> ${p.coachNote}
+        </div>
         <div style="margin-top:6px;padding:6px 8px;background:rgba(0,0,0,0.3);border-radius:6px;">
           <strong>News Status (${p.riskLevel}):</strong> ${p.newsReasoning}
         </div>

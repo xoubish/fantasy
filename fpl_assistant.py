@@ -369,9 +369,12 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     End-to-end weekly pipeline:
       1. Syncs live FPL API + appends newly finished GW match logs (`element-summary`)
       2. Scrapes latest Premier League injury & press conference news
-      3. Retrains the 22-feature time-decayed neural network on all completed GWs
-      4. Regenerates `index.html`, `data/latest_report.md`, and `data/my_squad_pitch.png`
+      3. Retrains the 22-feature Dual-Head time-decayed neural network (xP + Haul Ceiling)
+      4. Runs the AI Tactical Head Coach (3-GW horizon + role classification) & rebuilds `index.html`
+      5. Optionally commits & pushes to GitHub Pages (`--push`)
     """
+    import subprocess
+
     print("=== Step 1/4: Syncing Live FPL API & Appending Last Week's Match Logs ===")
     fpl_status = sync_live_fpl_data(fetch_player_histories=True)
     print(
@@ -384,19 +387,46 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     news_status = scrape_sports_websites()
     print(f"    Articles fetched: {news_status['articles_fetched']}")
 
-    print("=== Step 3/4: Retraining Time-Aware Neural Network (EWMA + Temporal Decay) ===")
+    print("=== Step 3/4: Retraining Dual-Head Time-Aware Neural Network (xP + Haul Ceiling) ===")
     net = get_or_train_neural_net(force_retrain=True)
     print(
         f"    Trained on {net.metrics.get('real_gw_samples')} match logs "
-        f"(up to GW {net.metrics.get('latest_trained_gw')}) | Val MAE: {net.metrics.get('val_mae')}"
+        f"(up to GW {net.metrics.get('latest_trained_gw')}) | Val MAE: {net.metrics.get('val_mae')} | "
+        f"Haul Brier: {net.metrics.get('haul_val_brier')}"
     )
 
-    print("=== Step 4/4: Rebuilding Web App (index.html) & Squad Report ===")
+    print("=== Step 4/4: Running AI Tactical Head Coach & Rebuilding Web App (index.html) ===")
     from web_app import build_static_html
 
     build_static_html()
     cmd_analyze(args)
     print("=== Weekly Update Complete! ===")
+
+    if getattr(args, "push", False):
+        print("=== Committing & Pushing Updated Page to GitHub Pages ===")
+        subprocess.run(
+            [
+                "git",
+                "add",
+                "index.html",
+                "data/nn_weights.json",
+                "data/ai_coach_decisions.json",
+                "data/latest_report.md",
+                "data/my_squad_pitch.png",
+            ],
+            check=False,
+        )
+        gw_num = net.metrics.get("latest_trained_gw", 9) + 1
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "-m",
+                f"Weekly FPL AI Update for GW {gw_num} (3-GW horizon + Dual-Head NN + AI Coach)",
+            ],
+            check=False,
+        )
+        subprocess.run(["git", "push"], check=False)
 
 
 def main() -> None:
@@ -411,7 +441,12 @@ def main() -> None:
 
     p_wk = sub.add_parser(
         "weekly-update",
-        help="Full weekly refresh: pull last week's GW data, retrain time-aware NN, and rebuild index.html",
+        help="Full weekly refresh: pull last week's GW data, retrain Dual-Head NN, run AI Coach, and rebuild index.html",
+    )
+    p_wk.add_argument(
+        "--push",
+        action="store_true",
+        help="Automatically git commit and push the updated index.html and weights to GitHub Pages",
     )
     p_wk.set_defaults(func=cmd_weekly_update)
 

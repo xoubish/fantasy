@@ -108,6 +108,8 @@ class PlayerRecord:
     opp_defence_strength: int  # Opponent defence strength in this venue
     historical_seasons: List[HistoricalSeasonStat] = field(default_factory=list)
     gw_history: List[Dict[str, Any]] = field(default_factory=list)
+    upcoming_3gw_fixtures: List[Dict[str, Any]] = field(default_factory=list)
+    fixture_run_3gw: str = ""
 
     @property
     def historical_ppg_3yr(self) -> float:
@@ -388,34 +390,54 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
         else:
             target_gw = 10
 
-    # Map team_id -> fixture info for target_gw
-    next_fix_by_team: Dict[int, Dict[str, Any]] = {}
-    for fix in fixtures:
-        if fix.get("event") == target_gw:
-            th = int(fix["team_h"])
-            ta = int(fix["team_a"])
-            th_obj = teams_by_id.get(th, {})
-            ta_obj = teams_by_id.get(ta, {})
-            r_h = team_ratings.get(th, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130})
-            r_a = team_ratings.get(ta, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130})
-            next_fix_by_team[th] = {
-                "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
-                "is_home": True,
-                "difficulty": int(fix.get("team_h_difficulty", 3)),
-                "team_att": r_h["att_home"],
-                "team_def": r_h["def_home"],
-                "opp_att": r_a["att_away"],
-                "opp_def": r_a["def_away"],
-            }
-            next_fix_by_team[ta] = {
-                "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
-                "is_home": False,
-                "difficulty": int(fix.get("team_a_difficulty", 3)),
-                "team_att": r_a["att_away"],
-                "team_def": r_a["def_away"],
-                "opp_att": r_h["att_home"],
-                "opp_def": r_h["def_home"],
-            }
+    # Map team_id -> list of upcoming 3-GW fixture dicts (target_gw, target_gw+1, target_gw+2)
+    horizon_gws = [target_gw, target_gw + 1, target_gw + 2]
+    upcoming_3gw_by_team: Dict[int, List[Dict[str, Any]]] = {tid: [] for tid in teams_by_id}
+    for gw_ev in horizon_gws:
+        for fix in fixtures:
+            if fix.get("event") == gw_ev:
+                th = int(fix["team_h"])
+                ta = int(fix["team_a"])
+                th_obj = teams_by_id.get(th, {})
+                ta_obj = teams_by_id.get(ta, {})
+                r_h = team_ratings.get(
+                    th, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130}
+                )
+                r_a = team_ratings.get(
+                    ta, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130}
+                )
+                if th in upcoming_3gw_by_team:
+                    upcoming_3gw_by_team[th].append(
+                        {
+                            "gw": gw_ev,
+                            "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
+                            "is_home": True,
+                            "difficulty": int(fix.get("team_h_difficulty", 3)),
+                            "team_att": r_h["att_home"],
+                            "team_def": r_h["def_home"],
+                            "opp_att": r_a["att_away"],
+                            "opp_def": r_a["def_away"],
+                        }
+                    )
+                if ta in upcoming_3gw_by_team:
+                    upcoming_3gw_by_team[ta].append(
+                        {
+                            "gw": gw_ev,
+                            "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
+                            "is_home": False,
+                            "difficulty": int(fix.get("team_a_difficulty", 3)),
+                            "team_att": r_a["att_away"],
+                            "team_def": r_a["def_away"],
+                            "opp_att": r_h["att_home"],
+                            "opp_def": r_h["def_home"],
+                        }
+                    )
+
+    next_fix_by_team: Dict[int, Dict[str, Any]] = {
+        tid: fixes[0]
+        for tid, fixes in upcoming_3gw_by_team.items()
+        if fixes
+    }
 
     records: List[PlayerRecord] = []
     for el in bootstrap.get("elements", []):
@@ -542,6 +564,10 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                 opp_defence_strength=fix_info["opp_def"],
                 historical_seasons=hist_objs,
                 gw_history=gw_hist,
+                upcoming_3gw_fixtures=upcoming_3gw_by_team.get(tid, [fix_info]),
+                fixture_run_3gw=" → ".join(
+                    f["opponent"] for f in upcoming_3gw_by_team.get(tid, [fix_info])[:3]
+                ),
             )
         )
     return records
