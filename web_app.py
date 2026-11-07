@@ -72,11 +72,12 @@ def _serialize_squad_result(
     vice_id = res.vice_captain.player.id
     cap = res.captain
     vice = res.vice_captain
+    xi_xp = sum(p.expected_points for p in res.starting_xi)
     coach_verdict = (
-        f"Exact MILP optimum, {res.formation} for £{total_cost:.1f}m. "
-        f"Captain {cap.player.web_name} ({cap.expected_points * 2:.1f}p doubled, {int(round(cap.haul_prob * 100))}% haul odds vs {cap.player.next_opponent}), "
-        f"vice {vice.player.web_name} ({vice.expected_points:.1f}p vs {vice.player.next_opponent}). "
-        f"Expected points are minutes-weighted: P(60+ min) x points given a start + P(cameo) x cameo points."
+        f"Captain {cap.player.web_name}: {cap.expected_points:.1f} xP doubled, {int(round(cap.haul_prob * 100))}% haul odds vs {cap.player.next_opponent}; "
+        f"vice {vice.player.web_name} ({vice.expected_points:.1f} xP vs {vice.player.next_opponent}). "
+        f"The eleven add up to {xi_xp:.1f} xP before the armband. "
+        f"Every player's xP is minutes-weighted, so rotation risks are priced in rather than filtered out."
     )
     return {
         "title": title,
@@ -133,6 +134,7 @@ def build_web_payload() -> Dict[str, Any]:
         "nnMetrics": nn_net.metrics,
         "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
+        "meta": _gameweek_meta(all_players),
     }
 
 
@@ -183,460 +185,319 @@ def _load_backtest_summary() -> Optional[Dict[str, Any]]:
             "modelFhVsNaiveFh": s["model_freehit_vs_naive_freehit"],
             "playerLevel": s["player_level"],
             "bias": s["freehit_prediction_bias"],
+            "perWeek": [
+                {k: w[k] for k in ("gw", "model_rolling", "naive_rolling", "fpl_average", "model_freehit",
+                                   "naive_freehit", "model_rolling_hits", "player_mae_model", "player_mae_naive")}
+                for w in res["weeks"]
+            ],
         }
     except Exception:
         return None
 
 
-HTML_TEMPLATE = """<!DOCTYPE html>
+def _gameweek_meta(all_players) -> Dict[str, Any]:
+    """Target gameweek number, its deadline and the last fully finished gameweek."""
+    from neural_model import latest_finished_gw
+
+    gw = next((p.target_gw for p in all_players if p.target_gw), 0)
+    deadline = ""
+    try:
+        bootstrap = json.loads((ROOT_DIR / "data" / "bootstrap_static.json").read_text(encoding="utf-8"))
+        ev = next((e for e in bootstrap.get("events", []) if int(e.get("id", 0)) == gw), {})
+        deadline = ev.get("deadline_time", "") or ""
+    except Exception:
+        pass
+    return {"gw": gw, "deadline": deadline, "trainedThroughGw": latest_finished_gw()}
+
+
+HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FPL AI — Best Squad of the Week</title>
+  <title>FPL AI Optimizer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&family=Space+Grotesk:wght@700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --fpl-deep: #0d0214;
-      --fpl-green: #00ff87;
-      --fpl-cyan: #04f5ff;
-      --fpl-pink: #ff2882;
-      --turf-dark: #12613a;
-      --turf-light: #177547;
-      --glass-bg: rgba(26, 9, 37, 0.72);
-      --glass-border: rgba(255, 255, 255, 0.11);
-      --text-muted: #b0a2bf;
+      --bg: #0f0a16;
+      --surface: #171022;
+      --surface-2: #1f1630;
+      --line: rgba(255, 255, 255, 0.09);
+      --line-strong: rgba(255, 255, 255, 0.16);
+      --text: #f3eef9;
+      --text-2: #c9bfd8;
+      --muted: #8f86a3;
+      --accent: #37f0a0;
+      --accent-ink: #0b1a12;
+      --cap: #ff3d8a;
+      --turf-a: #146a3c;
+      --turf-b: #187a46;
+      --s-model: #2fae72;
+      --s-avg: #5f78e3;
+      --s-naive: #b8862a;
+      --radius: 16px;
+      --shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: var(--fpl-deep);
+      background: var(--bg);
       background-image:
-        radial-gradient(at 15% 10%, rgba(0, 255, 135, 0.11) 0px, transparent 45%),
-        radial-gradient(at 85% 10%, rgba(4, 245, 255, 0.10) 0px, transparent 45%),
-        radial-gradient(at 50% 40%, rgba(55, 0, 60, 0.75) 0px, #0d0214 80%);
-      background-attachment: fixed;
-      color: #ffffff;
+        radial-gradient(900px 500px at 10% -10%, rgba(55, 240, 160, 0.10), transparent 60%),
+        radial-gradient(800px 500px at 95% 0%, rgba(95, 120, 227, 0.12), transparent 60%);
+      color: var(--text);
       min-height: 100vh;
-      padding: 28px 18px 48px;
+      padding: 22px 16px 56px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
     }
-    .container {
-      max-width: 1060px;
-      margin: 0 auto;
-    }
+    .container { max-width: 1180px; margin: 0 auto; min-width: 0; }
+    .tabs, .topbar { min-width: 0; }
+    h1, h2, h3 { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -0.01em; }
 
-    /* Minimal Glass Header */
-    header {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      align-items: center;
-      gap: 18px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 20px;
-      padding: 20px 26px;
-      margin-bottom: 16px;
-      backdrop-filter: blur(18px);
-      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+    /* ---------- top bar ---------- */
+    .topbar {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 20px;
+      padding: 6px 4px 18px;
     }
-    .brand h1 {
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+      background: linear-gradient(145deg, var(--accent), #5f78e3); color: #0b0812; font-weight: 800; font-size: 0.95rem;
       font-family: 'Space Grotesk', sans-serif;
-      font-size: 1.55rem;
-      font-weight: 800;
-      letter-spacing: -0.4px;
-      color: #ffffff;
     }
-    .brand-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      margin-top: 6px;
-      font-size: 0.84rem;
-      color: var(--text-muted);
+    .brand h1 { font-size: 1.3rem; font-weight: 700; line-height: 1.1; }
+    .brand .sub { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+    .gw-chip {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+      background: var(--surface); border: 1px solid var(--line-strong); font-size: 0.82rem; color: var(--text-2);
     }
-    .brand-meta span strong {
-      color: var(--fpl-green);
-      font-weight: 700;
-    }
+    .gw-chip strong { color: var(--text); font-weight: 700; }
+    .gw-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(55, 240, 160, 0.18); }
 
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
+    /* ---------- variation tabs ---------- */
+    .tabs {
+      display: flex; gap: 6px; flex-wrap: wrap; padding: 6px; border-radius: 14px;
+      background: var(--surface); border: 1px solid var(--line); margin-bottom: 16px;
     }
-    .score-badge {
-      background: rgba(0, 255, 135, 0.14);
-      border: 1px solid rgba(0, 255, 135, 0.4);
-      padding: 8px 16px;
-      border-radius: 12px;
-      text-align: right;
+    .tab {
+      flex: 1 1 150px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+      padding: 10px 12px; border-radius: 10px; text-align: left; transition: background 0.15s, color 0.15s;
+      font-family: inherit;
     }
-    .score-badge .lbl {
-      font-size: 0.65rem;
-      text-transform: uppercase;
-      letter-spacing: 0.9px;
-      color: var(--fpl-green);
-      font-weight: 700;
-    }
-    .score-badge .val {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 1.45rem;
-      font-weight: 800;
-      color: #fff;
-      line-height: 1.1;
-    }
+    .tab:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-2); }
+    .tab.active { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+    .tab .t-name { display: block; font-weight: 700; font-size: 0.84rem; }
+    .tab .t-meta { display: block; font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+    .tab.active .t-meta { color: var(--accent); }
 
-    .btn {
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.07);
-      color: #fff;
-      padding: 10px 16px;
-      border-radius: 11px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.18s ease;
+    /* ---------- KPI strip ---------- */
+    .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .kpi {
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
+      min-width: 0;
     }
-    .btn:hover {
-      background: rgba(255, 255, 255, 0.13);
-      transform: translateY(-1px);
-    }
-    .btn-primary {
-      background: linear-gradient(135deg, #00ff87 0%, #04f5ff 100%);
-      color: #120016;
-      border: none;
-      font-weight: 800;
-      box-shadow: 0 6px 18px rgba(0, 255, 135, 0.25);
-    }
-    .btn-primary:hover {
-      filter: brightness(1.06);
-      color: #120016;
-    }
+    .kpi .k-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+    .kpi .k-value { font-family: 'Space Grotesk', sans-serif; font-size: 1.6rem; font-weight: 700; line-height: 1.15; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .kpi .k-value.accent { color: var(--accent); }
+    .kpi .k-sub { font-size: 0.76rem; color: var(--text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    /* Minimal Variation Dots/Pills */
-    .variation-bar {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 18px;
-    }
-    .var-pill {
-      font-size: 0.76rem;
-      padding: 6px 13px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      color: var(--text-muted);
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.15s ease;
-    }
-    .var-pill:hover {
-      color: #fff;
-      background: rgba(255, 255, 255, 0.1);
-    }
-    .var-pill.active {
-      background: rgba(0, 255, 135, 0.18);
-      border-color: var(--fpl-green);
-      color: var(--fpl-green);
-    }
+    /* ---------- main grid ---------- */
+    .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; margin-bottom: 16px; }
 
-    /* Main 2-Column Layout */
-    .main-grid {
-      display: grid;
-      grid-template-columns: 1fr 310px;
-      gap: 20px;
-      align-items: start;
-    }
-    @media (max-width: 880px) {
-      .main-grid { grid-template-columns: 1fr; }
-    }
-
-    /* Stadium Pitch */
-    .pitch-wrapper {
-      background: rgba(255, 255, 255, 0.03);
-      padding: 10px;
-      border-radius: 22px;
-      border: 1px solid var(--glass-border);
-      box-shadow: 0 22px 55px rgba(0, 0, 0, 0.55);
-    }
+    .pitch-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow); }
     .pitch {
-      position: relative;
-      border-radius: 16px;
-      overflow: hidden;
-      border: 2px solid rgba(255, 255, 255, 0.7);
+      position: relative; border-radius: 12px; overflow: hidden;
       background:
-        radial-gradient(circle at 50% 10%, rgba(255,255,255,0.08) 0%, transparent 55%),
-        repeating-linear-gradient(
-          to bottom,
-          var(--turf-dark) 0px,
-          var(--turf-dark) 78px,
-          var(--turf-light) 78px,
-          var(--turf-light) 156px
-        );
-      padding: 24px 10px 26px;
+        radial-gradient(circle at 50% 0%, rgba(255,255,255,0.07) 0%, transparent 45%),
+        repeating-linear-gradient(to bottom, var(--turf-a) 0 72px, var(--turf-b) 72px 144px);
+      padding: 22px 8px 24px;
     }
-    .pitch-box-top {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 320px;
-      height: 92px;
-      border: 2px solid rgba(255, 255, 255, 0.35);
-      border-top: none;
-      pointer-events: none;
-    }
-    .pitch-circle {
-      position: absolute;
-      bottom: 50px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 120px;
-      height: 120px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      pointer-events: none;
-    }
-    .pitch-row {
-      display: flex;
-      justify-content: space-evenly;
-      align-items: center;
-      margin-bottom: 20px;
-      position: relative;
-      z-index: 2;
-    }
+    .pitch::before, .pitch::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); border: 2px solid rgba(255,255,255,0.28); pointer-events: none; }
+    .pitch::before { top: -2px; width: 42%; height: 86px; border-top: 0; border-radius: 0 0 4px 4px; }
+    .pitch::after { bottom: 46px; width: 118px; height: 118px; border-radius: 50%; }
+    .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 6px; margin-bottom: 18px; position: relative; z-index: 2; }
     .pitch-row:last-child { margin-bottom: 0; }
 
-    /* Clean Player Card */
     .player-card {
-      width: 122px;
-      background: rgba(11, 35, 24, 0.94);
-      border: 1.5px solid rgba(116, 198, 157, 0.45);
-      border-radius: 12px;
-      text-align: center;
-      position: relative;
-      padding-top: 9px;
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.4);
-      transition: all 0.16s ease;
-      cursor: pointer;
-      user-select: none;
+      width: 112px; border-radius: 12px; text-align: center; position: relative; cursor: pointer; user-select: none;
+      background: rgba(12, 32, 22, 0.92); border: 1.5px solid rgba(255, 255, 255, 0.22); padding-top: 10px;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
     }
-    .player-card:hover {
-      transform: translateY(-3px);
-      border-color: var(--fpl-green);
-    }
-    .player-card.selected {
-      border: 2px solid var(--fpl-cyan);
-      box-shadow: 0 0 0 3px rgba(4, 245, 255, 0.22), 0 8px 20px rgba(0, 0, 0, 0.5);
-    }
-    .price-tag {
-      position: absolute;
-      top: 5px;
-      left: 5px;
-      color: #a3e4d7;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.63rem;
-      font-weight: 700;
-      padding: 1px 4px;
-    }
+    .player-card:hover { transform: translateY(-3px); border-color: rgba(255, 255, 255, 0.55); }
+    .player-card.selected { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(55, 240, 160, 0.25), 0 8px 20px rgba(0, 0, 0, 0.5); }
+    .player-card.out { opacity: 0.55; }
+    .price-tag { position: absolute; top: 6px; left: 7px; font-size: 0.64rem; font-weight: 600; color: rgba(255,255,255,0.75); font-variant-numeric: tabular-nums; }
     .xp-tag {
-      position: absolute;
-      top: 5px;
-      right: 5px;
-      background: rgba(255, 255, 255, 0.9);
-      color: #0b1c12;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.66rem;
-      font-weight: 800;
-      padding: 1px 5px;
-      border-radius: 4px;
+      position: absolute; top: 5px; right: 6px; font-size: 0.68rem; font-weight: 800; padding: 2px 6px; border-radius: 6px;
+      background: rgba(255, 255, 255, 0.92); color: #0b1a12; font-variant-numeric: tabular-nums;
     }
-    .xp-tag.high {
-      background: var(--fpl-green);
-      color: #0d0012;
-    }
+    .xp-tag.high { background: var(--accent); }
     .cap-badge {
-      position: absolute;
-      top: 26px;
-      left: 6px;
-      width: 19px;
-      height: 19px;
-      border-radius: 50%;
-      background: var(--fpl-pink);
-      color: #fff;
-      font-size: 0.62rem;
-      font-weight: 900;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: absolute; top: 27px; left: 7px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+      background: var(--cap); color: #fff; font-size: 0.64rem; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     }
-    .cap-badge.vice {
-      background: rgba(255, 255, 255, 0.18);
-      color: #fff;
-    }
-    .jersey-svg {
-      width: 54px;
-      height: 48px;
-      margin: 10px auto 5px;
-      display: block;
-      filter: drop-shadow(0 3px 4px rgba(0,0,0,0.4));
-    }
-    .p-name {
-      background: #ffffff;
-      color: #1c0021;
-      font-weight: 800;
-      font-size: 0.76rem;
-      padding: 3.5px 4px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .p-fix {
-      background: #e8e4f0;
-      color: #2b0530;
-      font-weight: 700;
-      font-size: 0.67rem;
-      padding: 3px 4px;
-      border-radius: 0 0 10px 10px;
-    }
+    .cap-badge.vice { background: rgba(255, 255, 255, 0.25); }
+    .jersey-svg { width: 50px; height: 44px; margin: 10px auto 6px; display: block; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.4)); }
+    .p-name { background: #fff; color: #140a1c; font-weight: 700; font-size: 0.74rem; padding: 4px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .p-fix { background: #e9e4f1; color: #3a2347; font-weight: 600; font-size: 0.66rem; padding: 3px 4px; border-radius: 0 0 10px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    /* Bench */
-    .bench-box {
-      margin-top: 12px;
-      background: rgba(16, 48, 34, 0.85);
-      border: 1px solid rgba(82, 183, 136, 0.35);
-      border-radius: 14px;
-      padding: 12px 10px 10px;
-    }
-    .bench-title {
-      text-align: center;
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: #a3e4d7;
-      margin-bottom: 8px;
-      font-weight: 700;
-    }
-    .sub-lbl {
-      font-size: 0.63rem;
-      font-weight: 700;
-      color: #b7e4c7;
-      margin-bottom: 4px;
-      text-align: center;
-    }
+    .bench { margin-top: 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); padding: 10px 8px 10px; }
+    .bench-title { text-align: center; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+    .sub-lbl { font-size: 0.62rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-align: center; }
 
-    /* Minimal Sidebar */
-    .side-panel {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
+    /* ---------- side panels ---------- */
+    .side { display: flex; flex-direction: column; gap: 14px; }
+    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; min-width: 0; }
+    .panel h3 { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.09em; margin-bottom: 12px; font-weight: 600; }
+    .panel p { font-size: 0.82rem; color: var(--text-2); }
+    .stat-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 0.82rem; }
+    .stat-row:last-child { border-bottom: 0; }
+    .stat-row span { color: var(--muted); }
+    .stat-row strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+    .note { margin-top: 12px; padding: 10px 12px; background: rgba(55, 240, 160, 0.08); border-left: 3px solid var(--accent); border-radius: 6px; font-size: 0.8rem; color: var(--text-2); }
+    .verdict { font-size: 0.84rem; color: var(--text-2); }
+    .verdict strong { color: var(--text); }
+
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 600; background: rgba(255,255,255,0.08); color: var(--text-2); }
+    .pill.ok { background: rgba(47, 174, 114, 0.18); color: #7ee0b4; }
+    .pill.warn { background: rgba(184, 134, 42, 0.2); color: #f0c56a; }
+    .pill.bad { background: rgba(255, 61, 138, 0.18); color: #ff8fbd; }
+
+    /* ---------- lower grid ---------- */
+    .lower { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .lower .panel { height: 100%; }
+
+    .plan-week { padding: 10px 0; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--text-2); }
+    .plan-week:first-of-type { border-top: 0; padding-top: 0; }
+    .plan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .plan-head strong { color: var(--text); font-size: 0.86rem; }
+    .plan-move { display: flex; gap: 8px; align-items: baseline; }
+    .plan-move .arrow { color: var(--muted); }
+    .plan-move .in { color: var(--accent); font-weight: 600; }
+    .plan-foot { margin-top: 10px; font-size: 0.74rem; color: var(--muted); }
+
+    .chart { width: 100%; height: auto; display: block; margin-top: 6px; }
+    .chart text { font-family: 'Inter', sans-serif; fill: var(--muted); font-size: 10.5px; }
+    .chart .lbl { fill: var(--text-2); font-weight: 600; }
+    .chart .grid { stroke: rgba(255,255,255,0.08); stroke-width: 1; }
+    .chart .axis { stroke: rgba(255,255,255,0.22); stroke-width: 1; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 0.74rem; color: var(--text-2); margin-top: 8px; }
+    .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+    .tooltip {
+      position: fixed; pointer-events: none; z-index: 50; padding: 8px 10px; border-radius: 8px; font-size: 0.76rem;
+      background: #0b0712; border: 1px solid var(--line-strong); color: var(--text); box-shadow: var(--shadow); display: none; white-space: nowrap;
     }
-    .card-panel {
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 16px;
-      padding: 18px;
-      backdrop-filter: blur(16px);
+    .tooltip b { color: var(--accent); }
+    .metric-bars { margin-top: 4px; }
+    .metric { padding: 8px 0; border-top: 1px solid var(--line); font-size: 0.78rem; }
+    .metric:first-child { border-top: 0; }
+    .metric .m-head { display: flex; justify-content: space-between; color: var(--text-2); margin-bottom: 5px; }
+    .metric .m-head b { color: var(--text); font-weight: 600; }
+    .bar-pair { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; align-items: center; font-size: 0.72rem; color: var(--muted); margin: 3px 0; }
+    .bar-pair .track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.07); overflow: hidden; }
+    .bar-pair .fill { height: 100%; border-radius: 4px; }
+    .bar-pair .val { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+    .summary-line { display: flex; justify-content: space-between; gap: 10px; font-size: 0.78rem; color: var(--text-2); padding: 6px 0; border-top: 1px solid var(--line); }
+    .summary-line:first-child { border-top: 0; }
+    .summary-line b { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .caveat { font-size: 0.74rem; color: var(--muted); margin-top: 10px; }
+    footer { margin-top: 20px; font-size: 0.74rem; color: var(--muted); text-align: center; }
+
+    @media (max-width: 980px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .lower { grid-template-columns: 1fr; }
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
-    .card-panel h3 {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      margin-bottom: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.9px;
-    }
-    .stat-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 7px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-      font-size: 0.82rem;
-    }
-    .stat-row:last-child { border-bottom: none; }
-    .stat-row span { color: var(--text-muted); }
-    .stat-row strong { color: #fff; font-family: 'JetBrains Mono', monospace; }
-    .coach-note {
-      margin-top: 12px;
-      padding: 10px 12px;
-      background: rgba(0, 255, 135, 0.09);
-      border-left: 3px solid var(--fpl-green);
-      border-radius: 6px;
-      font-size: 0.79rem;
-      line-height: 1.45;
-      color: #ece6f2;
+    @media (max-width: 560px) {
+      body { padding: 14px 12px 40px; }
+      .pitch-card { padding: 8px; }
+      .pitch-row { gap: 3px; }
+      .player-card { width: calc((100vw - 64px) / 5 - 3px); max-width: 86px; min-width: 56px; border-radius: 9px; padding-top: 8px; }
+      .price-tag { display: none; }
+      .xp-tag { font-size: 0.6rem; padding: 1px 4px; top: 4px; right: 4px; }
+      .cap-badge { width: 16px; height: 16px; font-size: 0.56rem; top: 4px; left: 4px; }
+      .jersey-svg { width: 34px; height: 30px; margin: 8px auto 4px; }
+      .p-name { font-size: 0.6rem; padding: 3px 3px; }
+      .p-fix { font-size: 0.56rem; padding: 2px 2px; border-radius: 0 0 7px 7px; }
+      .p-team { display: none; }
+      .bench .pitch-row { flex-wrap: wrap; row-gap: 8px; }
+      .pitch { padding: 16px 4px 18px; }
+      .pitch::before { width: 55%; height: 60px; }
+      .pitch::after { width: 80px; height: 80px; bottom: 34px; }
+      .kpi .k-value { font-size: 1.3rem; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
+    <div class="topbar">
       <div class="brand">
-        <h1 id="squad-title">Best £100m Squad of the Week</h1>
-        <div class="brand-meta">
-          <span>Formation: <strong id="meta-form">3-4-3</strong></span>
-          <span>Captain (2x): <strong id="meta-cap">Gabriel</strong></span>
-          <span>Vice: <strong id="meta-vice">Haaland</strong></span>
-          <span>Cost: <strong id="meta-cost">£99.8m / £100.0m</strong></span>
+        <div class="brand-mark">xP</div>
+        <div>
+          <h1>FPL AI Optimizer</h1>
+          <div class="sub" id="brand-sub">Multi-head model · exact MILP squads · walk-forward backtest</div>
         </div>
       </div>
+      <div class="gw-chip"><span class="dot"></span><span id="gw-chip-text">Gameweek</span></div>
+    </div>
 
-      <div class="header-right">
-        <div class="score-badge">
-          <div class="lbl">Projected Score</div>
-          <div class="val" id="proj-score">74.2 pts</div>
-        </div>
-        <button class="btn btn-primary" onclick="nextVariation()">🔄 Next Variation</button>
-        <button class="btn" onclick="generateRandomHighScoringSquad()">🎲 Shuffle</button>
-      </div>
-    </header>
+    <div class="tabs" id="tabs"></div>
 
-    <div class="variation-bar" id="var-pills-bar"></div>
+    <div class="kpis">
+      <div class="kpi"><div class="k-label">Projected XI points</div><div class="k-value accent" id="kpi-xp">–</div><div class="k-sub" id="kpi-xp-sub">incl. captain, floor–ceiling</div></div>
+      <div class="kpi"><div class="k-label">Captain</div><div class="k-value" id="kpi-cap">–</div><div class="k-sub" id="kpi-cap-sub"></div></div>
+      <div class="kpi"><div class="k-label">Formation</div><div class="k-value" id="kpi-form">–</div><div class="k-sub" id="kpi-form-sub"></div></div>
+      <div class="kpi"><div class="k-label">Squad cost</div><div class="k-value" id="kpi-cost">–</div><div class="k-sub" id="kpi-cost-sub"></div></div>
+    </div>
 
     <div class="main-grid">
-      <div class="pitch-wrapper">
+      <div class="pitch-card">
         <div class="pitch">
-          <div class="pitch-box-top"></div>
-          <div class="pitch-circle"></div>
           <div class="pitch-row" id="row-gkp"></div>
           <div class="pitch-row" id="row-def"></div>
           <div class="pitch-row" id="row-mid"></div>
           <div class="pitch-row" id="row-fwd"></div>
         </div>
-
-        <div class="bench-box">
-          <div class="bench-title">Substitutes</div>
+        <div class="bench">
+          <div class="bench-title">Bench · in auto-sub order</div>
           <div class="pitch-row" id="row-bench"></div>
         </div>
       </div>
 
-      <div class="side-panel">
-        <div class="card-panel">
-          <h3>Player Details</h3>
+      <div class="side">
+        <div class="panel">
+          <h3>Player</h3>
           <div id="player-inspector"></div>
         </div>
-
-        <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
-          <h3>AI Coach & Model Summary</h3>
-          <div id="coach-verdict-box" style="margin-bottom:10px;padding:9px 11px;background:rgba(4,245,255,0.08);border-left:3px solid var(--fpl-cyan);border-radius:6px;color:#ece6f2;"></div>
-          <div id="nn-summary"></div>
-        </div>
-        <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
-          <h3>Your Squad: Transfer Plan</h3>
-          <div id="plan-box"></div>
-        </div>
-        <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
-          <h3>Walk-Forward Backtest</h3>
-          <div id="backtest-box"></div>
+        <div class="panel">
+          <h3>Why this squad</h3>
+          <div class="verdict" id="verdict"></div>
         </div>
       </div>
     </div>
+
+    <div class="lower">
+      <div class="panel">
+        <h3>Your squad · transfer plan</h3>
+        <div id="plan-box"></div>
+      </div>
+      <div class="panel">
+        <h3>Model quality · holdout gameweeks</h3>
+        <div id="model-box"></div>
+      </div>
+      <div class="panel">
+        <h3>Walk-forward backtest</h3>
+        <div id="backtest-box"></div>
+      </div>
+    </div>
+
+    <footer id="footer"></footer>
   </div>
+  <div class="tooltip" id="tooltip"></div>
 
   <script>
     const DATA = __PAYLOAD_JSON__;
@@ -663,20 +524,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       CRY: { body: "#1B458F", sleeve: "#C4122E", stripe: "#C4122E" },
       IPS: { body: "#3A64A3", sleeve: "#FFFFFF", stripe: null }
     };
+    const TAB_NAMES = ["This week", "5-GW run", "No premiums", "Fortress", "Differentials", "Strong bench"];
+    const COLORS = { model: "#2fae72", avg: "#5f78e3", naive: "#b8862a" };
 
     let currentVarIdx = 0;
     let selectedPlayerId = null;
+    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const f1 = (x) => (x === null || x === undefined) ? "–" : Number(x).toFixed(1);
+    const f2 = (x) => (x === null || x === undefined) ? "–" : Number(x).toFixed(2);
+    const signed = (x, d = 1) => (x >= 0 ? "+" : "") + Number(x).toFixed(d);
 
     function jerseySvg(team, isGkp) {
-      let kit = KIT_COLORS[team] || { body: "#37003c", sleeve: "#ffffff", stripe: null };
-      let body = isGkp ? (team === "BHA" ? "#ff5992" : "#10b981") : kit.body;
-      let sleeve = isGkp ? body : kit.sleeve;
-      let stripes = (!isGkp && kit.stripe)
+      const kit = KIT_COLORS[team] || { body: "#37003c", sleeve: "#ffffff", stripe: null };
+      const body = isGkp ? (team === "BHA" ? "#ff5992" : "#10b981") : kit.body;
+      const sleeve = isGkp ? body : kit.sleeve;
+      const stripes = (!isGkp && kit.stripe)
         ? `<rect x="21" y="10" width="3.8" height="36" fill="${kit.stripe}" opacity="0.92"/>
            <rect x="28.1" y="10" width="3.8" height="36" fill="${kit.stripe}" opacity="0.92"/>
            <rect x="35.2" y="10" width="3.8" height="36" fill="${kit.stripe}" opacity="0.92"/>`
         : "";
-      return `<svg class="jersey-svg" viewBox="0 0 60 52">
+      return `<svg class="jersey-svg" viewBox="0 0 60 52" aria-hidden="true">
         <polygon points="16,8 4,20 10,28 18,18" fill="${sleeve}" stroke="#0b0b0b" stroke-width="1.5"/>
         <polygon points="44,8 56,20 50,28 42,18" fill="${sleeve}" stroke="#0b0b0b" stroke-width="1.5"/>
         <rect x="16" y="8" width="28" height="38" rx="4" fill="${body}" stroke="#0b0b0b" stroke-width="1.5"/>
@@ -685,227 +552,202 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </svg>`;
     }
 
+    const PLAYER_INDEX = {};
+    function registerPlayers(list) { list.forEach(p => { PLAYER_INDEX[p.id] = p; }); }
+    DATA.variations.forEach(v => { registerPlayers(v.starters); registerPlayers(v.bench); });
+
     function createCardHtml(p, subLabel = null) {
-      const capHtml = p.isCaptain
-        ? `<div class="cap-badge">C</div>`
-        : (p.isVice ? `<div class="cap-badge vice">V</div>` : "");
+      const capHtml = p.isCaptain ? `<div class="cap-badge" title="Captain">C</div>` : (p.isVice ? `<div class="cap-badge vice" title="Vice-captain">V</div>` : "");
       const xpClass = p.displayXp >= 6.0 ? "xp-tag high" : "xp-tag";
-      const selClass = p.id === selectedPlayerId ? "player-card selected" : "player-card";
-      const wrapStart = subLabel ? `<div><div class="sub-lbl">${subLabel}</div>` : "";
+      const cls = ["player-card", p.id === selectedPlayerId ? "selected" : ""].join(" ");
+      const wrapStart = subLabel ? `<div><div class="sub-lbl">${esc(subLabel)}</div>` : "";
       const wrapEnd = subLabel ? `</div>` : "";
       return `${wrapStart}
-        <div class="${selClass}" id="pcard-${p.id}" onclick='inspectPlayer(${JSON.stringify(p).replace(/'/g, "&#39;")})'>
+        <div class="${cls}" id="pcard-${p.id}" onclick="inspectPlayer(${p.id})" title="${esc(p.fullName)}">
           <div class="price-tag">£${p.price.toFixed(1)}m</div>
-          <div class="${xpClass}">${p.displayXp.toFixed(1)}p</div>
+          <div class="${xpClass}">${p.displayXp.toFixed(1)}</div>
           ${capHtml}
           ${jerseySvg(p.team, p.pos === "GKP")}
-          <div class="p-name">${p.name}</div>
-          <div class="p-fix">${p.team} • ${p.opponent}</div>
+          <div class="p-name">${esc(p.name)}</div>
+          <div class="p-fix"><span class="p-team">${esc(p.team)} · </span>${esc(p.opponent)}</div>
         </div>
       ${wrapEnd}`;
     }
 
-    function inspectPlayer(p) {
-      selectedPlayerId = p.id;
-      document.querySelectorAll(".player-card").forEach(el => {
-        el.classList.toggle("selected", el.id === `pcard-${p.id}`);
-      });
-
+    function inspectPlayer(id) {
+      const p = PLAYER_INDEX[id];
+      if (!p) return;
+      selectedPlayerId = id;
+      document.querySelectorAll(".player-card").forEach(el => el.classList.toggle("selected", el.id === `pcard-${id}`));
+      const role = p.isCaptain ? '<span class="pill" style="background:rgba(255,61,138,.2);color:#ff8fbd">Captain</span>' : (p.isVice ? '<span class="pill">Vice-captain</span>' : "");
       document.getElementById("player-inspector").innerHTML = `
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-          <div style="width:50px;flex-shrink:0;">${jerseySvg(p.team, p.pos === "GKP")}</div>
-          <div>
-            <div style="font-size:1.05rem;font-weight:800;color:#fff;">${p.fullName}</div>
-            <div style="font-size:0.78rem;color:var(--text-muted);">${p.teamName} • ${p.pos} • £${p.price.toFixed(1)}m</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+          <div style="width:46px;flex-shrink:0;">${jerseySvg(p.team, p.pos === "GKP")}</div>
+          <div style="min-width:0;">
+            <div style="font-size:1rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(p.fullName)}</div>
+            <div style="font-size:0.76rem;color:var(--muted);">${esc(p.teamName)} · ${esc(p.pos)} · £${p.price.toFixed(1)}m ${role}</div>
           </div>
         </div>
-        <div class="stat-row"><span>Expected Points</span><strong style="color:var(--fpl-green)">${p.displayXp.toFixed(1)} pts</strong></div>
-        <div class="stat-row"><span>This Week</span><strong>${p.opponent}</strong></div>
-        <div class="stat-row"><span>Next 3 Games</span><strong style="font-size:0.75rem;">${p.fixtureRun3Gw || p.opponent}</strong></div>
-        <div class="stat-row"><span>9+ Pt Haul Odds</span><strong style="color:var(--fpl-cyan)">${p.haulProb}%</strong></div>
-        <div class="stat-row"><span>Clean Sheet Odds</span><strong>${p.csProb}%</strong></div>
-        <div class="stat-row"><span>Season PPG / Form</span><strong>${p.seasonPpg.toFixed(1)} / ${p.form}</strong></div>
-        <div class="coach-note">${p.coachNote}</div>
+        <div class="stat-row"><span>Expected points</span><strong style="color:var(--accent)">${p.displayXp.toFixed(1)}${p.isCaptain ? " (×2)" : ""}</strong></div>
+        <div class="stat-row"><span>This week</span><strong>${esc(p.opponent)}</strong></div>
+        <div class="stat-row"><span>Next three</span><strong style="font-size:0.74rem;">${esc(p.fixtureRun3Gw || p.opponent)}</strong></div>
+        <div class="stat-row"><span>Range (floor–ceiling)</span><strong>${p.floor}–${p.ceiling}</strong></div>
+        <div class="stat-row"><span>Haul odds (9+)</span><strong>${p.haulProb}%</strong></div>
+        <div class="stat-row"><span>Clean-sheet odds</span><strong>${p.csProb}%</strong></div>
+        <div class="stat-row"><span>Season PPG · form</span><strong>${p.seasonPpg.toFixed(1)} · ${p.form}</strong></div>
+        <div class="note">${esc(p.coachNote)}</div>
       `;
     }
 
     function renderSquadView(squad) {
-      document.getElementById("proj-score").textContent = `${squad.expectedPoints.toFixed(1)} pts`;
-      document.getElementById("meta-form").textContent = squad.formation;
-      document.getElementById("meta-cap").textContent = squad.captain;
-      document.getElementById("meta-vice").textContent = squad.viceCaptain;
-      document.getElementById("meta-cost").textContent = `£${squad.totalCost.toFixed(1)}m / £${squad.budget.toFixed(1)}m`;
-      document.getElementById("coach-verdict-box").innerHTML = `<strong>🤖 AI Decision:</strong> ${squad.coachVerdict || ('Selected ' + squad.formation + ' led by Captain ' + squad.captain + ' & Vice ' + squad.viceCaptain + '.')}`;
+      const starters = squad.starters;
+      const cap = starters.find(p => p.isCaptain) || starters[0];
+      const vice = starters.find(p => p.isVice);
+      document.getElementById("kpi-xp").textContent = squad.expectedPoints.toFixed(1);
+      document.getElementById("kpi-xp-sub").textContent = `range ${squad.floor}–${squad.ceiling} · captain included`;
+      document.getElementById("kpi-cap").textContent = cap.name;
+      document.getElementById("kpi-cap-sub").textContent = `${cap.displayXp.toFixed(1)} doubled vs ${cap.opponent}${vice ? " · vice " + vice.name : ""}`;
+      document.getElementById("kpi-form").textContent = squad.formation;
+      const benchXp = squad.bench.reduce((s, p) => s + p.xp, 0);
+      document.getElementById("kpi-form-sub").textContent = `bench ${benchXp.toFixed(1)} xP`;
+      document.getElementById("kpi-cost").textContent = `£${squad.totalCost.toFixed(1)}m`;
+      document.getElementById("kpi-cost-sub").textContent = `of £${squad.budget.toFixed(1)}m · £${(squad.budget - squad.totalCost).toFixed(1)}m in bank`;
+      document.getElementById("verdict").innerHTML = `<p style="margin-bottom:8px;"><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p>`;
 
-      const gkps = squad.starters.filter(p => p.pos === "GKP");
-      const defs = squad.starters.filter(p => p.pos === "DEF");
-      const mids = squad.starters.filter(p => p.pos === "MID");
-      const fwds = squad.starters.filter(p => p.pos === "FWD");
-
-      const capPlayer = squad.starters.find(p => p.isCaptain) || squad.starters[0];
-      if (capPlayer) selectedPlayerId = capPlayer.id;
-
-      document.getElementById("row-gkp").innerHTML = gkps.map(p => createCardHtml(p)).join("");
-      document.getElementById("row-def").innerHTML = defs.map(p => createCardHtml(p)).join("");
-      document.getElementById("row-mid").innerHTML = mids.map(p => createCardHtml(p)).join("");
-      document.getElementById("row-fwd").innerHTML = fwds.map(p => createCardHtml(p)).join("");
-
-      document.getElementById("row-bench").innerHTML = squad.bench.map((bp, i) => {
-        const lbl = i === 0 ? "GKP" : `${i}. ${bp.pos}`;
-        return createCardHtml(bp, lbl);
-      }).join("");
-
-      if (capPlayer) inspectPlayer(capPlayer);
+      const byPos = (pos) => starters.filter(p => p.pos === pos).map(p => createCardHtml(p)).join("");
+      document.getElementById("row-gkp").innerHTML = byPos("GKP");
+      document.getElementById("row-def").innerHTML = byPos("DEF");
+      document.getElementById("row-mid").innerHTML = byPos("MID");
+      document.getElementById("row-fwd").innerHTML = byPos("FWD");
+      document.getElementById("row-bench").innerHTML = squad.bench.map((bp, i) => createCardHtml(bp, i === 0 ? "GK" : `${i}. ${bp.pos}`)).join("");
+      inspectPlayer(cap.id);
     }
 
-    function renderVariationPills() {
-      document.getElementById("var-pills-bar").innerHTML = DATA.variations.map((v, i) => `
-        <span class="var-pill ${i === currentVarIdx ? 'active' : ''}" onclick="selectVariation(${i})">
-          Variation ${i + 1} (${v.formation} • ${v.expectedPoints.toFixed(1)}p)
-        </span>
-      `).join("");
+    function renderTabs() {
+      document.getElementById("tabs").innerHTML = DATA.variations.map((v, i) => `
+        <button class="tab ${i === currentVarIdx ? "active" : ""}" onclick="selectVariation(${i})" title="${esc(v.subtitle)}">
+          <span class="t-name">${esc(TAB_NAMES[i] || v.title)}</span>
+          <span class="t-meta">${v.formation} · ${v.expectedPoints.toFixed(1)} xP · C ${esc(v.captain)}</span>
+        </button>`).join("");
     }
+    function selectVariation(i) { currentVarIdx = i; renderTabs(); renderSquadView(DATA.variations[i]); }
 
-    function selectVariation(idx) {
-      currentVarIdx = idx;
-      renderVariationPills();
-      renderSquadView(DATA.variations[currentVarIdx]);
-    }
-
-    function nextVariation() {
-      currentVarIdx = (currentVarIdx + 1) % DATA.variations.length;
-      renderVariationPills();
-      renderSquadView(DATA.variations[currentVarIdx]);
-    }
-
-    function generateRandomHighScoringSquad() {
-      const formations = [[3,4,3], [3,5,2], [4,4,2], [4,3,3]];
-      const [nD, nM, nF] = formations[Math.floor(Math.random() * formations.length)];
-
-      const shuffleTop = (arr, topN) => {
-        const slice = arr.slice(0, topN);
-        for (let i = slice.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [slice[i], slice[j]] = [slice[j], slice[i]];
-        }
-        return slice;
-      };
-
-      const gkps = DATA.playerPool.filter(p => p.pos === "GKP").sort((a,b) => b.xp - a.xp);
-      const defs = DATA.playerPool.filter(p => p.pos === "DEF").sort((a,b) => b.xp - a.xp);
-      const mids = DATA.playerPool.filter(p => p.pos === "MID").sort((a,b) => b.xp - a.xp);
-      const fwds = DATA.playerPool.filter(p => p.pos === "FWD").sort((a,b) => b.xp - a.xp);
-
-      for (let attempt = 0; attempt < 250; attempt++) {
-        const clubs = {};
-        const used = new Set();
-        const pickGroup = (pool, count) => {
-          const out = [];
-          for (const cand of pool) {
-            if (out.length === count) break;
-            if (used.has(cand.id)) continue;
-            if ((clubs[cand.team] || 0) >= 3) continue;
-            clubs[cand.team] = (clubs[cand.team] || 0) + 1;
-            used.add(cand.id);
-            out.push({...cand, isCaptain: false, isVice: false, displayXp: cand.xp});
-          }
-          return out.length === count ? out : null;
-        };
-
-        const gStart = pickGroup(shuffleTop(gkps, 4), 1);
-        const dStart = pickGroup(shuffleTop(defs, 9), nD);
-        const mStart = pickGroup(shuffleTop(mids, 9), nM);
-        const fStart = pickGroup(shuffleTop(fwds, 7), nF);
-        if (!gStart || !dStart || !mStart || !fStart) continue;
-
-        const starters = [...gStart, ...dStart, ...mStart, ...fStart];
-        const gBench = pickGroup([...gkps].sort((a,b) => a.price - b.price), 1);
-        const dBench = pickGroup([...defs].sort((a,b) => a.price - b.price), 5 - nD);
-        const mBench = pickGroup([...mids].sort((a,b) => a.price - b.price), 5 - nM);
-        const fBench = pickGroup([...fwds].sort((a,b) => a.price - b.price), 3 - nF);
-        if (!gBench || !dBench || !mBench || !fBench) continue;
-
-        const all15 = [...starters, ...gBench, ...dBench, ...mBench, ...fBench];
-        const cost = all15.reduce((s, p) => s + p.price, 0);
-        if (cost > 100.0) continue;
-
-        const ranked = [...starters].sort((a,b) => (b.xp + 0.018 * b.haulProb) - (a.xp + 0.018 * a.haulProb));
-        const cap = ranked[0];
-        const vice = ranked[1];
-        starters.forEach(p => {
-          if (p.id === cap.id) { p.isCaptain = true; p.displayXp = +(p.xp * 2).toFixed(1); }
-          else if (p.id === vice.id) { p.isVice = true; }
-        });
-
-        const totXp = +(starters.reduce((s, p) => s + p.displayXp, 0)).toFixed(1);
-        if (totXp < 70.5) continue;
-
-        renderSquadView({
-          formation: `${nD}-${nM}-${nF}`,
-          totalCost: +cost.toFixed(1),
-          budget: 100.0,
-          expectedPoints: totXp,
-          captain: cap.name,
-          viceCaptain: vice.name,
-          starters,
-          bench: [...gBench, ...[...dBench, ...mBench, ...fBench].sort((a,b) => b.xp - a.xp)]
-        });
-        return;
+    /* ---------- meta ---------- */
+    (function renderMeta() {
+      const m = DATA.meta || {};
+      let dl = "";
+      if (m.deadline) {
+        const d = new Date(m.deadline);
+        dl = " · deadline " + d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       }
-    }
+      document.getElementById("gw-chip-text").innerHTML = `<strong>Gameweek ${m.gw || "?"}</strong>${esc(dl)}`;
+      document.getElementById("brand-sub").textContent = `Model trained on real outcomes through GW ${m.trainedThroughGw || "?"} · squads are exact mixed-integer optima`;
+    })();
 
-    if (DATA.nnMetrics) {
-      const m = DATA.nnMetrics;
+    /* ---------- tooltip helpers ---------- */
+    const tip = document.getElementById("tooltip");
+    function showTip(evt, html) { tip.innerHTML = html; tip.style.display = "block"; moveTip(evt); }
+    function moveTip(evt) { tip.style.left = (evt.clientX + 14) + "px"; tip.style.top = (evt.clientY - 10) + "px"; }
+    function hideTip() { tip.style.display = "none"; }
+
+    /* ---------- transfer plan ---------- */
+    (function renderPlan() {
+      const plan = DATA.transferPlan;
+      const box = document.getElementById("plan-box");
+      if (!plan) { box.innerHTML = `<p>Add your 15 players to <code>my_squad.json</code> and rebuild to see a multi-gameweek plan.</p>`; return; }
+      if (plan.error) { box.innerHTML = `<p>Plan unavailable: ${esc(plan.error)}</p>`; return; }
+      const head = `<div class="summary-line"><span>${esc(plan.name)}</span><b>FT ${plan.freeTransfers} · bank £${plan.bank.toFixed(1)}m</b></div>
+                    <div class="summary-line"><span>Plan value (xP − hits)</span><b>${plan.objective.toFixed(1)} · ${plan.totalHits} hit${plan.totalHits === 1 ? "" : "s"}</b></div>`;
+      const weeks = plan.weeks.map(w => {
+        const hit = w.hits ? `<span class="pill bad">hit −${4 * w.hits}</span>` : (w.out.length ? `<span class="pill ok">free</span>` : `<span class="pill">hold</span>`);
+        const moves = w.out.length
+          ? w.out.map((o, k) => `<div class="plan-move"><span>${esc(o)}</span><span class="arrow">→</span><span class="in">${esc(w.in[k] || "")}</span></div>`).join("")
+          : `<div class="plan-move"><span>No transfer</span></div>`;
+        return `<div class="plan-week">
+          <div class="plan-head"><strong>GW ${w.gw}</strong><span>${hit} <span class="pill">FT ${w.ft}</span></span></div>
+          ${moves}
+          <div style="margin-top:4px;color:var(--muted)">Captain ${esc(w.captain)} · XI ${w.xp.toFixed(1)} xP</div>
+        </div>`;
+      }).join("");
+      box.innerHTML = head + `<div style="margin-top:8px">${weeks}</div><div class="plan-foot">Free transfers bank to five. Extra transfers cost 4 points plus a 1.5-point friction margin, so marginal swaps are skipped. Selling prices assumed equal to current prices.</div>`;
+    })();
+
+    /* ---------- model quality ---------- */
+    function pairBars(label, modelVal, naiveVal, lowerIsBetter, fmt) {
+      const max = Math.max(modelVal, naiveVal) * 1.15 || 1;
+      const better = lowerIsBetter ? modelVal < naiveVal : modelVal > naiveVal;
+      const pill = better ? `<span class="pill ok">model better</span>` : `<span class="pill warn">baseline better</span>`;
+      const row = (name, v, c) => `<div class="bar-pair"><span>${name}</span><div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%;background:${c}"></div></div><span class="val">${fmt(v)}</span></div>`;
+      return `<div class="metric"><div class="m-head"><b>${label}</b>${pill}</div>${row("model", modelVal, COLORS.model)}${row("naive", naiveVal, COLORS.naive)}</div>`;
+    }
+    (function renderModel() {
+      const m = DATA.nnMetrics || {};
       const h = m.holdout || {};
-      const top3 = Object.entries(m.feature_importance || {})
-        .slice(0, 3)
-        .map(([k, v]) => `${k} (${v}%)`)
-        .join(", ");
-      document.getElementById("nn-summary").innerHTML = `
-        <div>• <strong>Model:</strong> ${m.architecture || 'multi-head network'} trained on actual gameweek points and minutes</div>
-        <div>• <strong>Data:</strong> ${m.real_gw_samples} player-gameweek rows through GW ${m.latest_trained_gw}</div>
-        <div>• <strong>Holdout (${m.holdout_gws || 'n/a'}, future gameweeks):</strong> MAE ${h.mae_points} pts vs naive baseline ${h.mae_naive_baseline} (constant ${h.mae_constant_baseline}); correlation ${h.corr_points} vs naive ${h.corr_naive_baseline}</div>
-        <div>• <strong>Minutes model:</strong> log-loss ${h.minutes_logloss} vs base rate ${h.minutes_logloss_baseline} • <strong>Haul odds:</strong> Brier ${h.haul_brier} vs base rate ${h.haul_brier_baseline}</div>
-        <div>• <strong>Strongest inputs:</strong> ${top3}</div>
-        <div>• <strong>Squads:</strong> exact mixed-integer optimisation (HiGHS), not a heuristic search</div>
-      `;
-    }
+      const box = document.getElementById("model-box");
+      if (!h.mae_points) { box.innerHTML = `<p>Run <code>python3 fpl_assistant.py train-nn</code> to populate.</p>`; return; }
+      const top = Object.entries(m.feature_importance || {}).slice(0, 4).map(([k]) => k.replace(/_/g, " ")).join(", ");
+      box.innerHTML = `
+        <div class="summary-line"><span>Trained on</span><b>${m.real_gw_samples} player-weeks · GW ≤ ${m.latest_trained_gw}</b></div>
+        <div class="summary-line"><span>Scored on</span><b>${esc(m.holdout_gws || "")} (${h.n | 0} rows, unseen)</b></div>
+        <div class="metric-bars">
+          ${pairBars("Points error (MAE, lower is better)", h.mae_points, h.mae_naive_baseline, true, f2)}
+          ${pairBars("Correlation with actual points", h.corr_points, h.corr_naive_baseline, false, f2)}
+          ${pairBars("Minutes log-loss (lower is better)", h.minutes_logloss, h.minutes_logloss_baseline, true, f2)}
+          ${pairBars("Haul odds Brier (lower is better)", h.haul_brier, h.haul_brier_baseline, true, (x) => Number(x).toFixed(3))}
+        </div>
+        <div class="caveat">Naive baseline: prior play-rate × points per appearance. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Strongest inputs: ${esc(top)}.</div>`;
+    })();
 
-    const plan = DATA.transferPlan;
-    const planBox = document.getElementById("plan-box");
-    if (!plan) {
-      planBox.innerHTML = `<div>Add your 15 players to <code>my_squad.json</code> and rebuild to see a multi-gameweek transfer plan.</div>`;
-    } else if (plan.error) {
-      planBox.innerHTML = `<div>Plan unavailable: ${plan.error}</div>`;
-    } else {
-      planBox.innerHTML = `
-        <div style="margin-bottom:6px;">${plan.name} • FT ${plan.freeTransfers} • bank £${plan.bank.toFixed(1)}m • plan value ${plan.objective.toFixed(1)} xP (hits: ${plan.totalHits})</div>
-        ${plan.weeks.map(w => `
-          <div style="padding:6px 0;border-top:1px solid var(--glass-border);">
-            <strong style="color:#fff;">GW ${w.gw}</strong> <span style="opacity:.75">(FT ${w.ft}${w.hits ? `, hit −${4 * w.hits}` : ''})</span><br>
-            ${w.out.length ? `OUT: ${w.out.join(', ')}<br>IN: <strong style="color:var(--fpl-green)">${w.in.join(', ')}</strong><br>` : 'No transfer<br>'}
-            Captain ${w.captain} • XI ${w.xp.toFixed(1)} xP
-          </div>`).join('')}
-        <div style="margin-top:6px;opacity:.7;">Free transfers bank to 5; every extra transfer costs 4 points plus a friction margin, so marginal swaps are skipped.</div>
-      `;
-    }
+    /* ---------- backtest chart ---------- */
+    (function renderBacktest() {
+      const bt = DATA.backtest;
+      const box = document.getElementById("backtest-box");
+      if (!bt || !bt.perWeek) { box.innerHTML = `<p>Run <code>python3 backtest.py</code> to populate out-of-sample results.</p>`; return; }
+      const rows = bt.perWeek;
+      const series = [
+        { key: "model_rolling", name: "Model, 1 FT/week", c: COLORS.model },
+        { key: "fpl_average", name: "FPL average", c: COLORS.avg },
+        { key: "naive_rolling", name: "Naive, 1 FT/week", c: COLORS.naive },
+      ];
+      const W = 420, H = 190, padL = 30, padR = 8, padT = 10, padB = 24;
+      const maxV = Math.max(...rows.flatMap(r => series.map(s => r[s.key]))) * 1.1;
+      const groupW = (W - padL - padR) / rows.length;
+      const barW = Math.min(14, (groupW - 10) / series.length - 2);
+      const y = (v) => padT + (H - padT - padB) * (1 - v / maxV);
+      const ticks = [0, 20, 40, 60, 80].filter(t => t <= maxV);
+      let svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weekly points by strategy">`;
+      ticks.forEach(t => { svg += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${y(t)}" y2="${y(t)}"/><text x="${padL - 6}" y="${y(t) + 3.5}" text-anchor="end">${t}</text>`; });
+      svg += `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}"/>`;
+      rows.forEach((r, i) => {
+        const gx = padL + i * groupW + (groupW - (barW + 2) * series.length) / 2;
+        series.forEach((s, k) => {
+          const v = r[s.key];
+          const x = gx + k * (barW + 2);
+          const top = y(Math.max(v, 0));
+          const hgt = Math.max(0, y(0) - top);
+          const tipHtml = `GW ${r.gw} · ${s.name}<br><b>${v} pts</b>${s.key === "model_rolling" && r.model_rolling_hits ? ` (after ${r.model_rolling_hits} hit${r.model_rolling_hits > 1 ? "s" : ""})` : ""}`;
+          svg += `<rect x="${x}" y="${top}" width="${barW}" height="${hgt}" rx="3" fill="${s.c}" onmousemove='moveTip(event)' onmouseenter='showTip(event, ${JSON.stringify(tipHtml)})' onmouseleave='hideTip()'/>`;
+          if (s.key === "model_rolling") svg += `<text class="lbl" x="${x + barW / 2}" y="${top - 4}" text-anchor="middle">${v}</text>`;
+        });
+        svg += `<text x="${padL + i * groupW + groupW / 2}" y="${H - 8}" text-anchor="middle">GW ${r.gw}</text>`;
+      });
+      svg += `</svg>`;
+      const legend = `<div class="legend">${series.map(s => `<span style="--c:${s.c}">${s.name}</span>`).join("")}</div>`;
+      const m1 = bt.modelRollingVsAvg, m2 = bt.modelFhVsNaiveFh, pl = bt.playerLevel;
+      const t = bt.totals;
+      box.innerHTML = `
+        <div class="summary-line"><span>Weeks ${bt.weeks[0]}–${bt.weeks[bt.weeks.length - 1]}, trained only on earlier weeks</span><b>${bt.weeks.length} GWs</b></div>
+        ${svg}${legend}
+        <div style="margin-top:10px">
+          <div class="summary-line"><span>Totals · model / FPL avg / naive</span><b>${t.model_rolling} / ${t.fpl_average} / ${t.naive_rolling}</b></div>
+          <div class="summary-line"><span>Model vs FPL average, per week</span><b>${signed(m1.mean)} ± ${f1(m1.sd)} · won ${m1.weeks_won}/${m1.weeks}</b></div>
+          <div class="summary-line"><span>Model vs naive, weekly rebuild</span><b>${signed(m2.mean)} ± ${f1(m2.sd)} · won ${m2.weeks_won}/${m2.weeks}</b></div>
+          <div class="summary-line"><span>Player-level MAE · correlation</span><b>${f2(pl.model_mae)} vs ${f2(pl.naive_mae)} · ${f2(pl.model_corr)} vs ${f2(pl.naive_corr)}</b></div>
+        </div>
+        <div class="caveat">Real points with auto-subs and captaincy. The rolling manager starts cold in GW 3 with two weeks of data, while humans built squads with full prior-season knowledge. One gameweek has a standard deviation of roughly 15 points.</div>`;
+    })();
 
-    const bt = DATA.backtest;
-    const btBox = document.getElementById("backtest-box");
-    if (!bt) {
-      btBox.innerHTML = `<div>Run <code>python3 backtest.py</code> to populate out-of-sample results.</div>`;
-    } else {
-      const fmt = (m) => `${m.mean >= 0 ? '+' : ''}${m.mean.toFixed(1)} ± ${m.sd.toFixed(1)} pts/week (won ${m.weeks_won}/${m.weeks})`;
-      btBox.innerHTML = `
-        <div>Gameweeks ${bt.weeks[0]}–${bt.weeks[bt.weeks.length - 1]}: trained only on earlier weeks, scored on real points with auto-subs and captaincy.</div>
-        <div style="margin-top:6px;">• <strong>Player-level accuracy:</strong> MAE ${bt.playerLevel.model_mae} vs naive ${bt.playerLevel.naive_mae}; correlation ${bt.playerLevel.model_corr} vs ${bt.playerLevel.naive_corr}</div>
-        <div>• <strong>Weekly rebuild, model vs naive:</strong> ${fmt(bt.modelFhVsNaiveFh)}</div>
-        <div>• <strong>Realistic manager (1 FT/week), model vs FPL average:</strong> ${fmt(bt.modelRollingVsAvg)}</div>
-        <div>• <strong>Realistic manager, naive vs FPL average:</strong> ${fmt(bt.naiveRollingVsAvg)}</div>
-        <div>• <strong>Projection bias:</strong> weekly-rebuild squads were predicted ${bt.bias >= 0 ? '+' : ''}${bt.bias} pts/week vs actual</div>
-        <div style="margin-top:6px;opacity:.7;">${bt.weeks.length} weeks is a small sample: one gameweek has a standard deviation of roughly 15 points.</div>
-      `;
-    }
+    document.getElementById("footer").textContent = "Expected points = P(60+ minutes) × points given a start + P(cameo) × cameo points. Availability uses the learned minutes model and official FPL flags; headlines are informational only.";
 
     selectVariation(0);
   </script>
