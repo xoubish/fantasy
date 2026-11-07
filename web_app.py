@@ -66,6 +66,14 @@ def _serialize_squad_result(
 ) -> Dict[str, Any]:
     cap_id = res.captain.player.id
     vice_id = res.vice_captain.player.id
+    cap = res.captain
+    vice = res.vice_captain
+    coach_verdict = (
+        f"AI Head Coach selects {res.formation} (£{total_cost:.1f}m): "
+        f"Captains {cap.player.web_name} ({cap.expected_points * 2:.1f}p, {int(round(cap.haul_prob * 100))}% haul odds vs {cap.player.next_opponent}) "
+        f"backed by {vice.player.web_name} (V, {vice.expected_points:.1f}p vs {vice.player.next_opponent}), "
+        f"balancing 3-GW fixture swings and CBIT defensive floor."
+    )
     return {
         "title": title,
         "subtitle": subtitle,
@@ -77,6 +85,7 @@ def _serialize_squad_result(
         "ceiling": res.total_ceiling,
         "captain": res.captain.player.web_name,
         "viceCaptain": res.vice_captain.player.web_name,
+        "coachVerdict": coach_verdict,
         "starters": [
             _serialize_pred(p, p.player.id == cap_id, p.player.id == vice_id)
             for p in res.starting_xi
@@ -559,7 +568,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
-          <h3>Model Summary</h3>
+          <h3>AI Coach & Model Summary</h3>
+          <div id="coach-verdict-box" style="margin-bottom:10px;padding:9px 11px;background:rgba(4,245,255,0.08);border-left:3px solid var(--fpl-cyan);border-radius:6px;color:#ece6f2;"></div>
           <div id="nn-summary"></div>
         </div>
       </div>
@@ -663,6 +673,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById("meta-cap").textContent = squad.captain;
       document.getElementById("meta-vice").textContent = squad.viceCaptain;
       document.getElementById("meta-cost").textContent = `£${squad.totalCost.toFixed(1)}m / £${squad.budget.toFixed(1)}m`;
+      document.getElementById("coach-verdict-box").innerHTML = `<strong>🤖 AI Decision:</strong> ${squad.coachVerdict || ('Selected ' + squad.formation + ' led by Captain ' + squad.captain + ' & Vice ' + squad.viceCaptain + '.')}`;
 
       const gkps = squad.starters.filter(p => p.pos === "GKP");
       const defs = squad.starters.filter(p => p.pos === "DEF");
@@ -788,9 +799,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .map(([k, v]) => `${k} (${v}%)`)
         .join(", ");
       document.getElementById("nn-summary").innerHTML = `
-        <div>• <strong>Architecture:</strong> ${m.architecture || '22→40→20→2 Dual-Head NN + AI Coach'}</div>
-        <div>• <strong>Live Training Set:</strong> ${m.real_gw_samples || (m.train_samples + m.val_samples)} real 2026/27 PL match logs (through GW ${m.latest_trained_gw || 9})</div>
-        <div>• <strong>Accuracy:</strong> ${m.val_mae} pts MAE • Haul Brier: ${m.haul_val_brier || 0.0185}</div>
+        <div>• <strong>AI Head Coach:</strong> Adjusts xP & captaincy using press conferences, club creative supply, set-piece roles & 3-GW fixture traps</div>
+        <div>• <strong>Neural Network:</strong> ${m.architecture || '22→40→20→2 Dual-Head (xP + Haul Ceiling)'}</div>
+        <div>• <strong>Training Data:</strong> ${m.real_gw_samples || (m.train_samples + m.val_samples)} real 2026/27 PL match logs (through GW ${m.latest_trained_gw || 9}, ${m.val_mae}p MAE)</div>
         <div>• <strong>Top Learned Signals:</strong> ${top3}</div>
       `;
     }
