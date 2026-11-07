@@ -21,7 +21,6 @@ from news_scraper import load_all_news
 from predictor import (
     OptimizedSquadResult,
     PlayerPrediction,
-    build_transfer_plan,
     get_shuffle_squads,
     predict_player,
 )
@@ -135,44 +134,10 @@ def build_web_payload() -> Dict[str, Any]:
         "squads": squads_json,
         "nnMetrics": nn_net.metrics,
         "minutesLedger": ledger_summary,
-        "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
         "historicalBacktest": _load_historical_summary(),
         "meta": _gameweek_meta(all_players),
     }
-
-
-def _build_my_squad_plan(all_players, all_preds) -> Optional[Dict[str, Any]]:
-    """Multi-gameweek MILP transfer plan for the squad in my_squad.json (None if not 15 players)."""
-    try:
-        from fpl_assistant import _match_squad_players
-
-        cfg = json.loads(SQUAD_CONFIG_PATH.read_text(encoding="utf-8"))
-        squad_players = _match_squad_players(all_players, cfg)
-        if len(squad_players) != 15:
-            return None
-        by_id = {p.player.id: p for p in all_preds}
-        squad_preds = [by_id[p.id] for p in squad_players]
-        ft = int(cfg.get("free_transfers", 1))
-        bank = float(cfg.get("bank_millions", 0.0))
-        view = build_transfer_plan(squad_preds, all_preds, bank, ft, horizon=4)
-        if view is None:
-            return None
-        weeks = []
-        for w in view.plan.weeks:
-            weeks.append({
-                "gw": w.gw,
-                "ft": w.free_transfers_before,
-                "out": [view.by_id[i].player.web_name for i in w.transfers_out],
-                "in": [f"{view.by_id[i].player.web_name} (£{view.by_id[i].player.price:.1f}m)" for i in w.transfers_in],
-                "hits": w.hits,
-                "captain": view.by_id[w.captain_id].player.web_name,
-                "xp": w.expected_points,
-            })
-        return {"name": cfg.get("manager_name", "My squad"), "freeTransfers": ft, "bank": bank,
-                "objective": view.plan.objective, "totalHits": view.plan.total_hits, "weeks": weeks}
-    except Exception as exc:  # the page must still build without a valid my_squad.json
-        return {"error": str(exc)}
 
 
 def _load_historical_summary() -> List[Dict[str, Any]]:
@@ -230,7 +195,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PL Fantasy Predictor</title>
-  <meta name="description" content="Premier League fantasy player projections, squad shuffling, transfer planning, and historical model performance." />
+  <meta name="description" content="Premier League fantasy player projections, squad shuffling, what goes into the model, and its measured out-of-sample performance." />
   <meta name="theme-color" content="#080e14" />
   <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -352,22 +317,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .pill.warn { background: #37301c; color: #e4c77f; }
     .pill.bad { background: #3d241c; color: #f4b196; }
     .pill.captain { background: #30371c; color: var(--lime); }
-    .moves-section, .evidence-section { margin-top: 36px; }
-    .plan-summary { display: flex; justify-content: space-between; gap: 20px; padding: 6px 0 18px; }
-    .plan-summary h3 { font: 500 27px var(--display); }
-    .plan-summary p { color: var(--muted); font-size: 11px; margin-top: 4px; }
-    .plan-value { text-align: right; }
-    .plan-value strong { display: block; font: 500 28px var(--mono); color: var(--accent); }
-    .plan-value span { font-size: 10px; color: var(--muted); }
-    .plan-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); border: 1px solid var(--line); background: var(--surface); }
-    .plan-week { padding: 18px; border-right: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
-    .plan-week:last-child { border-right: 0; }
-    .plan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 14px; }
-    .plan-head strong { font: 500 17px var(--mono); color: var(--text); }
-    .plan-move { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 5px 0; }
-    .plan-move .arrow { color: var(--muted); }
-    .plan-move .in { color: var(--accent); font-weight: 600; }
-    .plan-foot { margin-top: 12px; font-size: 10px; color: var(--muted); max-width: 800px; }
+    .about-section, .evidence-section { margin-top: 36px; }
+    .about-prose { max-width: 880px; }
+    .about-prose p { font-size: 13.5px; line-height: 1.65; color: var(--text-2); margin: 0 0 14px; }
+    .about-prose b { color: var(--text); font-weight: 600; }
     .lower { display: grid; grid-template-columns: .85fr 1.15fr; gap: 36px; }
     .lower .panel + .panel { border-left: 1px solid var(--line); padding-left: 36px; }
     .chart { width: 100%; height: auto; display: block; margin-top: 18px; }
@@ -402,10 +355,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .k-value { font-size: 29px; }
       .p-team { display: none; }
       .price-tag { display: none; }
-      .plan-weeks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .plan-week:nth-child(2n) { border-right: 0; }
-      .plan-week:nth-child(n+3) { border-top: 1px solid var(--line); }
-    }
+          }
     @media (max-width: 800px) {
       .intro { gap: 20px; }
       .fixture-ticket { padding: 12px 15px; gap: 14px; }
@@ -469,10 +419,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .stat-row { font-size: 12px; }
       .lower { grid-template-columns: minmax(0, 1fr); gap: 28px; }
       .lower .panel + .panel { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-      .plan-week { padding: 14px 12px; font-size: 11px; }
-      .plan-head { align-items: flex-start; flex-direction: column; gap: 6px; }
-      .plan-summary h3 { font-size: 24px; }
-      .site-footer { gap: 14px; flex-direction: column; }
+            .site-footer { gap: 14px; flex-direction: column; }
     }
     @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; } }
   </style>
@@ -529,13 +476,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
       </section>
 
-      <section class="moves-section" id="moves" aria-labelledby="moves-label">
-        <div class="section-head"><h2 class="section-label" id="moves-label">Transfer plan</h2></div>
-        <div id="plan-box"></div>
+      <section class="about-section" id="about" aria-labelledby="about-label">
+        <div class="section-head"><h2 class="section-label" id="about-label">What goes into a projection</h2><span class="section-hint" id="brand-sub">Historical training. Out-of-sample results.</span></div>
+        <div class="about-prose" id="about-box"></div>
       </section>
 
       <section class="evidence-section" id="evidence" aria-labelledby="evidence-label">
-        <div class="section-head"><h2 class="section-label" id="evidence-label">Model performance</h2><span class="section-hint" id="brand-sub">Historical training. Out-of-sample results.</span></div>
+        <div class="section-head"><h2 class="section-label" id="evidence-label">How well does it work?</h2><span class="section-hint">Measured on weeks the model never saw</span></div>
         <div class="lower">
           <div class="panel"><h3>Prediction accuracy</h3><div id="model-box"></div></div>
           <div class="panel"><h3>Strategy performance</h3><div id="backtest-box"></div></div>
@@ -744,25 +691,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     function hideTip() { tip.style.display = "none"; }
 
-    /* ---------- transfer plan ---------- */
-    (function renderPlan() {
-      const plan = DATA.transferPlan;
-      const box = document.getElementById("plan-box");
-      if (!plan) { box.innerHTML = `<p>Add your 15 players to <code>my_squad.json</code> and rebuild to see a multi-gameweek plan.</p>`; return; }
-      if (plan.error) { box.innerHTML = `<p>Plan unavailable: ${esc(plan.error)}</p>`; return; }
-      const head = `<div class="plan-summary"><div><h3>${esc(plan.name)}</h3><p>${plan.freeTransfers} free transfer${plan.freeTransfers === 1 ? "" : "s"} · £${plan.bank.toFixed(1)}m in the bank</p></div><div class="plan-value"><strong>${plan.objective.toFixed(1)}</strong><span>plan xP after ${plan.totalHits} hit${plan.totalHits === 1 ? "" : "s"}</span></div></div>`;
-      const weeks = plan.weeks.map(w => {
-        const hit = w.hits ? `<span class="pill bad">hit −${4 * w.hits}</span>` : (w.out.length ? `<span class="pill ok">free</span>` : `<span class="pill">hold</span>`);
-        const moves = w.out.length
-          ? w.out.map((o, k) => `<div class="plan-move"><span>${esc(o)}</span><span class="arrow">→</span><span class="in">${esc(w.in[k] || "")}</span></div>`).join("")
-          : `<div class="plan-move"><span>No transfer</span></div>`;
-        return `<div class="plan-week">
-          <div class="plan-head"><strong>GW ${w.gw}</strong><span>${hit} <span class="pill">FT ${w.ft}</span></span></div>
-          ${moves}
-          <div style="margin-top:4px;color:var(--muted)">Captain ${esc(w.captain)} · XI ${w.xp.toFixed(1)} xP</div>
-        </div>`;
-      }).join("");
-      box.innerHTML = head + `<div class="plan-weeks">${weeks}</div><div class="plan-foot">Free transfers bank to five. Extra transfers cost 4 points plus a 1.5-point friction margin, so marginal swaps are skipped. Selling prices assumed equal to current prices.</div>`;
+    /* ---------- about the model ---------- */
+    (function renderAbout() {
+      const m = DATA.nnMetrics || {};
+      const box = document.getElementById("about-box");
+      const seasons = (m.training_seasons || []);
+      const rows = Number(m.real_gw_samples || 0).toLocaleString();
+      const ens = m.ensemble_weights || {};
+      const output = { direct: "a direct points head", component: "the component heads", blend: "an average of the direct head and the component heads" }[m.points_output] || "the points heads";
+      const ensText = (ens.points || ens.minutes) ? ` Two gradient-boosted models trained on the same rows are blended in (weights chosen on validation weeks: ${Number(ens.points || 0).toFixed(2)} on points, ${Number(ens.minutes || 0).toFixed(2)} on minutes).` : "";
+      box.innerHTML = `
+        <p>Every projection above is for one player in the next gameweek. It comes from a small neural network trained on <b>${rows} player-matches</b> from ${seasons.length} completed Premier League seasons (${esc(seasons.join(", "))}).${ensText} The inputs for a player are: recent form per 90 minutes (points, expected goals and assists, bonus points, defensive contributions, saves), shrunk toward last season's rates so a hot fortnight is not taken at face value; how often the player has been starting and finishing matches; the fixture, as expected goals for and against the club from a team-strength model fitted on every match since 2021 and from bookmaker odds for that match; home or away; price; and which scoring rules are in force.</p>
+        <p>The model first estimates the chance of playing 0, 1 to 59 or 60+ minutes, then the points if the player plays. Points come from ${output}: separate estimates of goals, assists, a clean sheet, goals conceded, saves, bonus, the defensive-contribution threshold and cards, mapped through the official scoring rules. Official injury and suspension flags, including the stated return date, override the minutes estimate. The squad above is then chosen by an exact optimizer under the £100m budget, three-per-club and formation rules, with the captain doubled.</p>
+        <p>Nothing from the current season is used to fit or tune the model. The panels below measure it on ${esc(m.test_gws || "later weeks")} of the last completed season, which the model never saw, and on this season so far. The comparison throughout is a <b>naive baseline</b>: each player's average points per fixture up to that week, scaled by how often they have played, which is roughly what "pick whoever has been scoring" gives you. Beating it is the minimum a model has to do; the FPL average score is the sterner test.</p>`;
     })();
 
     /* ---------- model quality ---------- */

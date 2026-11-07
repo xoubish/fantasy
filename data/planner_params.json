@@ -1,115 +1,115 @@
 {
-  "transfer_friction": 2.5,
-  "risk_margin": 0.5,
+  "transfer_friction": 0.0,
+  "risk_margin": 1.0,
   "selected_on": "GW11-18 rolling-manager points, seasons ['2024-25', '2025-26']",
-  "selected_at": "2026-11-07T16:34:52.439148+00:00",
+  "selected_at": "2026-11-07T17:03:01.793565+00:00",
   "grid": [
     {
       "transfer_friction": 0.0,
       "risk_margin": 0.0,
-      "points": 983,
+      "points": 998,
       "by_season": {
-        "2024-25": 484,
-        "2025-26": 499
+        "2024-25": 510,
+        "2025-26": 488
       }
     },
     {
       "transfer_friction": 0.0,
       "risk_margin": 0.5,
-      "points": 999,
+      "points": 987,
       "by_season": {
-        "2024-25": 507,
-        "2025-26": 492
+        "2024-25": 510,
+        "2025-26": 477
       }
     },
     {
       "transfer_friction": 0.0,
       "risk_margin": 1.0,
-      "points": 1025,
+      "points": 1036,
       "by_season": {
-        "2024-25": 512,
-        "2025-26": 513
+        "2024-25": 518,
+        "2025-26": 518
       }
     },
     {
       "transfer_friction": 0.75,
       "risk_margin": 0.0,
-      "points": 1023,
+      "points": 1008,
       "by_season": {
-        "2024-25": 531,
-        "2025-26": 492
+        "2024-25": 504,
+        "2025-26": 504
       }
     },
     {
       "transfer_friction": 0.75,
       "risk_margin": 0.5,
-      "points": 1017,
+      "points": 1035,
       "by_season": {
-        "2024-25": 506,
-        "2025-26": 511
+        "2024-25": 518,
+        "2025-26": 517
       }
     },
     {
       "transfer_friction": 0.75,
-      "risk_margin": 1.0,
-      "points": 1019,
-      "by_season": {
-        "2024-25": 523,
-        "2025-26": 496
-      }
-    },
-    {
-      "transfer_friction": 1.5,
-      "risk_margin": 0.0,
-      "points": 1004,
-      "by_season": {
-        "2024-25": 512,
-        "2025-26": 492
-      }
-    },
-    {
-      "transfer_friction": 1.5,
-      "risk_margin": 0.5,
-      "points": 1021,
-      "by_season": {
-        "2024-25": 511,
-        "2025-26": 510
-      }
-    },
-    {
-      "transfer_friction": 1.5,
-      "risk_margin": 1.0,
-      "points": 1012,
-      "by_season": {
-        "2024-25": 530,
-        "2025-26": 482
-      }
-    },
-    {
-      "transfer_friction": 2.5,
-      "risk_margin": 0.0,
-      "points": 1021,
-      "by_season": {
-        "2024-25": 511,
-        "2025-26": 510
-      }
-    },
-    {
-      "transfer_friction": 2.5,
-      "risk_margin": 0.5,
-      "points": 1027,
-      "by_season": {
-        "2024-25": 530,
-        "2025-26": 497
-      }
-    },
-    {
-      "transfer_friction": 2.5,
       "risk_margin": 1.0,
       "points": 1020,
       "by_season": {
-        "2024-25": 538,
-        "2025-26": 482
+        "2024-25": 536,
+        "2025-26": 484
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 0.0,
+      "points": 1035,
+      "by_season": {
+        "2024-25": 518,
+        "2025-26": 517
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 0.5,
+      "points": 1002,
+      "by_season": {
+        "2024-25": 518,
+        "2025-26": 484
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 1.0,
+      "points": 996,
+      "by_season": {
+        "2024-25": 525,
+        "2025-26": 471
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 0.0,
+      "points": 1002,
+      "by_season": {
+        "2024-25": 518,
+        "2025-26": 484
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 0.5,
+      "points": 1003,
+      "by_season": {
+        "2024-25": 531,
+        "2025-26": 472
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 1.0,
+      "points": 974,
+      "by_season": {
+        "2024-25": 508,
+        "2025-26": 466
       }
     }
   ]
