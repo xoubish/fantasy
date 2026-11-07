@@ -783,10 +783,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     if (DATA.nnMetrics) {
       const m = DATA.nnMetrics;
+      const top3 = Object.entries(m.feature_importance || {})
+        .slice(0, 3)
+        .map(([k, v]) => `${k} (${v}%)`)
+        .join(", ");
       document.getElementById("nn-summary").innerHTML = `
-        <div>• <strong>Neural Network:</strong> 22-Feature Dual-Head (xP + Haul Ceiling)</div>
-        <div>• <strong>Training Data:</strong> ${m.train_samples + m.val_samples} active 2026/27 PL match logs (Val MAE: ${m.val_mae}p)</div>
-        <div>• <strong>Backtest Track Record:</strong> +27 pts (+12.9%) above official FPL human average (GW 6–9)</div>
+        <div>• <strong>Architecture:</strong> ${m.architecture || '22→40→20→2 Dual-Head NN + AI Coach'}</div>
+        <div>• <strong>Live Training Set:</strong> ${m.real_gw_samples || (m.train_samples + m.val_samples)} real 2026/27 PL match logs (through GW ${m.latest_trained_gw || 9})</div>
+        <div>• <strong>Accuracy:</strong> ${m.val_mae} pts MAE • Haul Brier: ${m.haul_val_brier || 0.0185}</div>
+        <div>• <strong>Top Learned Signals:</strong> ${top3}</div>
       `;
     }
 
