@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from fpl_data import load_players
+from neural_model import get_or_train_neural_net
 from news_scraper import load_all_news
 from predictor import (
     OptimizedSquadResult,
@@ -54,6 +55,8 @@ def _serialize_pred(p: PlayerPrediction, is_cap: bool = False, is_vice: bool = F
         "gc2Prob": int(round(p.concede_2plus_prob * 100)),
         "ppg3Yr": p.player.historical_ppg_3yr,
         "form": p.player.form,
+        "nnXp": round(p.nn_xp_90, 1),
+        "ruleXp": round(p.rule_xp_90, 1),
         "xp": round(p.expected_points, 1),
         "displayXp": round(p.expected_points * 2 if is_cap else p.expected_points, 1),
         "floor": p.floor_points * 2 if is_cap else p.floor_points,
@@ -170,12 +173,15 @@ def build_web_payload() -> Dict[str, Any]:
         if p.news.risk_level not in ("INJURED_OR_OUT", "CAMEO_ROTATION_RISK")
     ]
 
+    nn_net = get_or_train_neural_net(force_retrain=False)
+
     return {
         "variations": variations_json,
         "mySquad": user_json,
         "dreamXi": dream_json,
         "transfers": transfers_json,
         "playerPool": healthy_pool_json,
+        "nnMetrics": nn_net.metrics,
     }
 
 
@@ -616,6 +622,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <div class="card-panel">
+          <h3>🧠 Supervised Neural Network (14→24→12→1)</h3>
+          <div id="nn-metrics-box" style="font-size:0.81rem; line-height:1.45; color:#e5e0eb;"></div>
+        </div>
+
+        <div class="card-panel">
           <h3>Tactical & News Insights</h3>
           <ul class="info-list" id="notes-list"></ul>
         </div>
@@ -706,6 +717,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div style="color:var(--fpl-green);font-weight:700;margin-bottom:8px;">
           Fixture: ${p.opponent} | Projected: ${p.displayXp.toFixed(1)} xP (Range: ${p.floor}–${p.ceiling} pts)
         </div>
+        <div>• <strong>🧠 Neural Net 90m:</strong> ${p.nnXp.toFixed(1)}p | <strong>📐 Rule Engine 90m:</strong> ${p.ruleXp.toFixed(1)}p</div>
         <div>• <strong>3-Year Historical PPG:</strong> ${p.ppg3Yr.toFixed(1)} pts/90 (Form: ${p.form})</div>
         <div>• <strong>Clean Sheet Odds:</strong> ${p.csProb}% | <strong>Concede 2+ Goals Risk:</strong> ${p.gc2Prob}%</div>
         <div>• <strong>Start Probability:</strong> ${p.startProb}% | <strong>1-Pt Cameo Risk:</strong> ${p.cameoProb}%</div>
@@ -893,6 +905,32 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="gain-badge">+${t.xpGain.toFixed(1)} xP</span>
       </div>
     `).join("");
+
+    // Populate Neural Network Metrics panel
+    if (DATA.nnMetrics) {
+      const m = DATA.nnMetrics;
+      const topFeats = Object.entries(m.feature_importance || {}).slice(0, 6);
+      const barsHtml = topFeats.map(([k, v]) => `
+        <div style="margin-top:4px;">
+          <div style="display:flex;justify-content:space-between;font-size:0.75rem;">
+            <span>${k}</span><strong style="color:var(--fpl-green)">${v}%</strong>
+          </div>
+          <div style="background:rgba(255,255,255,0.1);height:5px;border-radius:3px;overflow:hidden;">
+            <div style="background:var(--fpl-green);width:${Math.min(100, v * 6)}%;height:100%;"></div>
+          </div>
+        </div>
+      `).join("");
+      document.getElementById("nn-metrics-box").innerHTML = `
+        <div style="margin-bottom:6px;">
+          Trained on <strong>${m.train_samples + m.val_samples}</strong> multi-season GW samples (${m.epochs} epochs, Adam optimizer).
+        </div>
+        <div style="color:var(--fpl-cyan);font-weight:700;margin-bottom:6px;">
+          Val MAE: ${m.val_mae} pts • Val RMSE: ${m.val_rmse} pts
+        </div>
+        <div style="font-size:0.76rem;color:#bbb;margin-bottom:4px;">Top Learned Feature Weights:</div>
+        ${barsHtml}
+      `;
+    }
 
     // Initial render
     selectVariation(0);

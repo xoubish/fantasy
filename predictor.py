@@ -17,7 +17,17 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from fpl_data import PlayerRecord
+from neural_model import extract_features, get_or_train_neural_net
 from news_scraper import NewsArticle, PlayerNewsAssessment, analyze_player_news
+
+_CACHED_NN = None
+
+
+def _get_nn():
+    global _CACHED_NN
+    if _CACHED_NN is None:
+        _CACHED_NN = get_or_train_neural_net(force_retrain=False)
+    return _CACHED_NN
 
 # Official FPL Scoring Rules by Position
 GOAL_POINTS = {"GKP": 10.0, "DEF": 6.0, "MID": 5.0, "FWD": 4.0}
@@ -52,8 +62,10 @@ class PlayerPrediction:
     concede_2plus_prob: float
     expected_goals: float
     expected_assists: float
-    xp_if_90: float
-    expected_points: float  # news-adjusted xP
+    rule_xp_90: float  # Official FPL Rule Engine 90-min prediction
+    nn_xp_90: float  # Supervised Neural Network (14->24->12->1) 90-min prediction
+    xp_if_90: float  # Hybrid Ensemble 90-min prediction
+    expected_points: float  # News-adjusted final xP
     floor_points: int
     ceiling_points: int
     lineup_score: float  # penalizes high 1-pt cameo risk when picking Starting XI
@@ -142,9 +154,15 @@ def predict_player(
         + bonus_pts
     )
 
-    # 4. Blend with 3-Year Historical Baseline & Current Form for stability
+    # 4. Supervised Neural Network (14 -> 24 -> 12 -> 1) + Rule Engine Hybrid Ensemble
     hist_ppg = player.historical_ppg_3yr
-    blended_90_xp = 0.65 * raw_90_xp + 0.20 * player.form + 0.15 * hist_ppg
+    rule_90_xp = 0.70 * raw_90_xp + 0.15 * player.form + 0.15 * hist_ppg
+
+    nn_model = _get_nn()
+    nn_90_xp = nn_model.predict(extract_features(player))
+
+    # Hybrid Ensemble: 55% Supervised Neural Network + 45% Official FPL Rule Engine
+    blended_90_xp = 0.55 * nn_90_xp + 0.45 * rule_90_xp
 
     # 5. Apply News / Press Conference Start & Cameo Probabilities
     # If a player starts (60+ mins) -> blended_90_xp; if cameo (<60 mins) -> 1.0 pt; if 0 mins -> 0.0 pt
@@ -186,6 +204,8 @@ def predict_player(
         concede_2plus_prob=round(concede_2plus_prob, 2),
         expected_goals=round(exp_g, 2),
         expected_assists=round(exp_a, 2),
+        rule_xp_90=round(rule_90_xp, 2),
+        nn_xp_90=round(nn_90_xp, 2),
         xp_if_90=round(blended_90_xp, 2),
         expected_points=round(expected_pts, 2),
         floor_points=floor_pts,

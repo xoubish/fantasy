@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from fpl_data import DATA_DIR, PlayerRecord, load_players, sync_live_fpl_data
+from neural_model import fetch_real_merged_gw_samples, get_or_train_neural_net
 from news_scraper import load_all_news, scrape_sports_websites
 from pitch_renderer import render_pitch_figure
 from predictor import (
@@ -347,6 +348,16 @@ def cmd_add_news(args: argparse.Namespace) -> None:
     print(f"Added press conference / news note for {args.player} to {SQUAD_CONFIG_PATH.name}!")
 
 
+def cmd_train_nn(args: argparse.Namespace) -> None:
+    if args.fetch_real:
+        print("Fetching real historical gameweek CSVs (2022-23 to 2024-25)...")
+        real_samples = fetch_real_merged_gw_samples()
+        print(f"Fetched {len(real_samples)} real Premier League GW training samples.")
+    print("Training Supervised FPL Neural Network (14 -> 24 -> 12 -> 1)...")
+    net = get_or_train_neural_net(force_retrain=True)
+    print(json.dumps(net.metrics, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="FPL Multi-Season Data + News Scraper & Squad Optimizer"
@@ -378,6 +389,17 @@ def main() -> None:
     p_news.add_argument("text", help="Full press conference quote or news snippet")
     p_news.add_argument("--source", default="Press Conference / Sporting Life", help="Source name")
     p_news.set_defaults(func=cmd_add_news)
+
+    p_nn = sub.add_parser(
+        "train-nn",
+        help="Train the supervised neural network (14->24->12->1) on multi-season GW data",
+    )
+    p_nn.add_argument(
+        "--fetch-real",
+        action="store_true",
+        help="Download real merged_gw.csv rows from multi-season GitHub archive first",
+    )
+    p_nn.set_defaults(func=cmd_train_nn)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):
