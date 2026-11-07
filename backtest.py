@@ -3,7 +3,12 @@
 Walk-forward backtester with current-snapshot metadata (backtest.py)
 
 For every completed gameweek T in the test range:
-  1. Blind all data to gameweeks < T (match logs, prices, team strengths, availability).
+  1. Blind all data to gameweeks < T: match logs, prices and club membership come from the
+     match rows themselves, team ratings use results before the GW T deadline, and
+     availability flags come from the latest public snapshot saved before that deadline
+     (`data/snapshots/`), or are treated as "available" when no snapshot predates it.
+     Players without a match row for GW T (not yet registered, or later signings) are
+     excluded, so today's roster never leaks into earlier weeks.
   2. Use fixed weights trained only on completed historical seasons; no current rows are fitted.
   3. Predict every player for GW T (and the following horizon).
   4. Run several STRATEGIES, score them with real GW T points, official auto-subs and captaincy:
@@ -26,8 +31,10 @@ from __future__ import annotations
 
 import argparse
 import copy
+import gzip
 import json
 import statistics
+from datetime import datetime, timezone
 from dataclasses import replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -36,15 +43,47 @@ import numpy as np
 import news_scraper
 import predictor
 from ai_coach import evaluate_squad_with_ai_coach
-from fpl_data import CACHE_BOOTSTRAP, CACHE_FIXTURES, DATA_DIR, HORIZON_GWS, PlayerRecord, compute_team_strengths, load_players
+from fpl_data import CACHE_BOOTSTRAP, CACHE_FIXTURES, DATA_DIR, HORIZON_GWS, PlayerRecord, fixture_context, load_players, team_model
 from neural_model import (
     FPLNeuralNetwork,
 )
-from optimizer import PlanPlayer, plan_transfers, select_candidate_pool, solve_squad
+from optimizer import PlanPlayer, load_planner_params, plan_transfers, select_candidate_pool, solve_squad
 from predictor import PlayerPrediction, predict_player, to_plan_players
 
 RESULTS_PATH = DATA_DIR / "backtest_results.json"
-DEFAULT_RATING = {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130}
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
+
+
+def _parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def snapshot_before(deadline: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Latest archived public snapshot observed before `deadline` (None when there is none).
+
+    Snapshots are written by every successful live sync. Only `observed_at` ordering is
+    used, so a snapshot taken after the deadline can never inform that week's test.
+    """
+    if not deadline or not SNAPSHOT_DIR.exists():
+        return None
+    cutoff = _parse_time(deadline)
+    best: Optional[Tuple[datetime, Path]] = None
+    for path in SNAPSHOT_DIR.glob("*.json.gz"):
+        try:
+            observed = datetime.strptime(path.name.split(".")[0], "%Y%m%dT%H%M%S%fZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if observed < cutoff and (best is None or observed > best[0]):
+            best = (observed, path)
+    if best is None:
+        return None
+    with gzip.open(best[1], "rt", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    observed_at = payload.get("observed_at")
+    if observed_at and _parse_time(observed_at) >= cutoff:
+        return None
+    payload["path"] = str(best[1])
+    return payload
 
 
 # --------------------------------------------------------------------------------------
@@ -53,9 +92,20 @@ DEFAULT_RATING = {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_awa
 def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Dict[str, Any]]:
     bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
     fixtures = json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
-    ev_meta = next((e for e in bootstrap.get("events", []) if int(e.get("id", 0)) == target_gw), {})
-    past_ratings = compute_team_strengths(bootstrap, fixtures, max_gw=target_gw - 1)
+    ev_meta = dict(next((e for e in bootstrap.get("events", []) if int(e.get("id", 0)) == target_gw), {}))
+    model, codes = team_model(bootstrap, fixtures, max_gw=target_gw - 1)
     teams_by_id = {int(t["id"]): t for t in bootstrap.get("teams", [])}
+    fixture_by_id = {int(f["id"]): f for f in fixtures if f.get("id") is not None}
+    team_has_fixture = {int(f["team_h"]) for f in fixtures if int(f.get("event", 0) or 0) == target_gw} | \
+                       {int(f["team_a"]) for f in fixtures if int(f.get("event", 0) or 0) == target_gw}
+
+    snapshot = snapshot_before(ev_meta.get("deadline_time"))
+    snapshot_elements: Dict[int, Dict[str, Any]] = {}
+    if snapshot:
+        snapshot_elements = {int(el["id"]): el for el in snapshot.get("bootstrap", {}).get("elements", [])}
+        ev_meta["availability_snapshot"] = snapshot.get("observed_at")
+    else:
+        ev_meta["availability_snapshot"] = None
 
     up_by_team: Dict[int, List[Dict[str, Any]]] = {tid: [] for tid in teams_by_id}
     for gw_ev in [target_gw + k for k in range(HORIZON_GWS)]:
@@ -63,22 +113,44 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
             if fix.get("event") != gw_ev:
                 continue
             th, ta = int(fix["team_h"]), int(fix["team_a"])
-            rh, ra = past_ratings.get(th, DEFAULT_RATING), past_ratings.get(ta, DEFAULT_RATING)
             if th in up_by_team:
-                up_by_team[th].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(ta, {}).get('short_name', 'OPP')} (H)", "is_home": True,
-                                       "difficulty": int(fix.get("team_h_difficulty", 3)), "team_att": rh["att_home"], "team_def": rh["def_home"],
-                                       "opp_att": ra["att_away"], "opp_def": ra["def_away"]})
+                up_by_team[th].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(ta, {}).get('short_name', 'OPP')} (H)",
+                                       "difficulty": int(fix.get("team_h_difficulty", 3) or 3)} | fixture_context(model, codes, th, ta, True))
             if ta in up_by_team:
-                up_by_team[ta].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(th, {}).get('short_name', 'OPP')} (A)", "is_home": False,
-                                       "difficulty": int(fix.get("team_a_difficulty", 3)), "team_att": ra["att_away"], "team_def": ra["def_away"],
-                                       "opp_att": rh["att_home"], "opp_def": rh["def_home"]})
+                up_by_team[ta].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(th, {}).get('short_name', 'OPP')} (A)",
+                                       "difficulty": int(fix.get("team_a_difficulty", 3) or 3)} | fixture_context(model, codes, ta, th, False))
+
+    def team_from_row(row: Dict[str, Any]) -> Optional[int]:
+        fix = fixture_by_id.get(int(row.get("fixture", -1) or -1))
+        if not fix:
+            return None
+        return int(fix["team_h"]) if row.get("was_home") else int(fix["team_a"])
 
     blinded: List[PlayerRecord] = []
+    excluded_unregistered = 0
     for p in load_players(target_gw=target_gw):
         q = copy.copy(p)
         prior = [r for r in p.gw_history if int(r.get("round", 99) or 99) < target_gw and r.get("team_h_score") is not None]
+        target_rows = [r for r in p.gw_history if int(r.get("round", 0) or 0) == target_gw]
+        # Club membership and registration come from the match rows, never today's roster.
+        anchor_row = target_rows[0] if target_rows else (prior[-1] if prior else None)
+        team_id = team_from_row(anchor_row) if anchor_row else None
+        if team_id is None or (not target_rows and team_id in team_has_fixture):
+            excluded_unregistered += 1
+            continue
         q.gw_history = prior
-        q.status, q.chance_of_playing_next_round, q.fpl_news = "a", None, ""
+        q.team_id = team_id
+        q.team_short = teams_by_id.get(team_id, {}).get("short_name", q.team_short)
+        q.team_name = teams_by_id.get(team_id, {}).get("name", q.team_name)
+        snap = snapshot_elements.get(p.id)
+        if snap is not None:
+            q.status = snap.get("status", "a")
+            q.chance_of_playing_next_round = snap.get("chance_of_playing_next_round")
+            q.fpl_news = snap.get("news", "") or ""
+            q.penalties_order = snap.get("penalties_order")
+            q.corners_order = snap.get("corners_and_indirect_freekicks_order")
+        else:
+            q.status, q.chance_of_playing_next_round, q.fpl_news = "a", None, ""
         if prior:
             tot_mins = sum(int(r.get("minutes", 0) or 0) for r in prior)
             tot_pts = sum(int(r.get("total_points", 0) or 0) for r in prior)
@@ -101,7 +173,7 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
         else:
             q.minutes, q.total_points, q.starts = 0, 0, 0
             q.points_per_game, q.form = 0.0, 0.0
-        up = up_by_team.get(p.team_id, [])
+        up = up_by_team.get(team_id, [])
         q.upcoming_3gw_fixtures = up
         q.fixture_run_3gw = " → ".join(x["opponent"] for x in up[:3])
         q.target_gw = target_gw
@@ -110,9 +182,11 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
             q.next_opponent, q.is_home, q.fixture_difficulty = f0["opponent"], f0["is_home"], f0["difficulty"]
             q.team_attack_strength, q.team_defence_strength = f0["team_att"], f0["team_def"]
             q.opp_attack_strength, q.opp_defence_strength = f0["opp_att"], f0["opp_def"]
+            q.lambda_for, q.lambda_against = f0["lambda_for"], f0["lambda_against"]
         else:
             q.next_opponent = "BLANK"
         blinded.append(q)
+    ev_meta["excluded_unregistered"] = excluded_unregistered
     return blinded, ev_meta
 
 
@@ -206,10 +280,13 @@ def predict_all_for_gw(target_gw: int, use_coach: bool) -> Tuple[List[PlayerPred
 class RollingManager:
     """Carries a squad across gameweeks with FPL transfer rules and a MILP transfer plan."""
 
-    def __init__(self, label: str, horizon: int = 3, friction: float = 1.5, log: bool = False):
+    def __init__(self, label: str, horizon: int = 3, friction: Optional[float] = None, log: bool = False,
+                 risk_margin: Optional[float] = None):
+        params = load_planner_params()
         self.label = label
         self.horizon = horizon
-        self.friction = friction
+        self.friction = params["transfer_friction"] if friction is None else friction
+        self.risk_margin = params["risk_margin"] if risk_margin is None else risk_margin
         self.log = log
         self.squad: Optional[List[int]] = None
         self.bank = 0.0
@@ -243,7 +320,7 @@ class RollingManager:
             pool = select_candidate_pool(candidates, gws, keep_ids=self.squad)
             budget = round(sum(price_of[i] for i in self.squad) + self.bank, 1)
             plan = plan_transfers(pool, self.squad, gws, budget=budget, free_transfers=self.free_transfers, time_limit=30.0,
-                                  transfer_friction=self.friction)
+                                  transfer_friction=self.friction, risk_margin=self.risk_margin)
             assert plan is not None
             w0 = plan.weeks[0]
             if self.log and (w0.transfers_in or w0.hits):
@@ -259,7 +336,7 @@ class RollingManager:
         return lineup, bench, cap, vice, hits, xp
 
 
-def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, friction: float = 1.5) -> Dict[str, Any]:
+def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, friction: Optional[float] = None) -> Dict[str, Any]:
     if not gws:
         raise ValueError("Select at least one completed gameweek to backtest.")
     raw_by_id = {p.id: p for p in load_players(target_gw=gws[0])}
@@ -288,6 +365,8 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
         wa = np.asarray(week_rows)
 
         row: Dict[str, Any] = {"gw": gw, "train_rows": n_rows, "fpl_average": int(ev_meta.get("average_entry_score", 0) or 0),
+                               "availability_snapshot": ev_meta.get("availability_snapshot"),
+                               "excluded_unregistered": ev_meta.get("excluded_unregistered", 0),
                                "fpl_highest": int(ev_meta.get("highest_score", 0) or 0),
                                "player_mae_model": round(float(np.abs(wa[:, 0] - wa[:, 2]).mean()), 2),
                                "player_mae_naive": round(float(np.abs(wa[:, 1] - wa[:, 2]).mean()), 2),
@@ -338,10 +417,12 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
         "training_seasons": model_metadata.get("training_seasons", []),
         "training_samples": model_metadata.get("real_gw_samples"),
         "current_season_fitted": False,
-        "limitations": "Historical match logs are time-filtered; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. This is not a fully point-in-time simulation.",
+        "limitations": "Match logs, prices, club membership, registration and team ratings are time-filtered to each deadline. Availability flags and set-piece roles come from public snapshots saved before the deadline when one exists, otherwise everyone is treated as available. Selling prices equal purchase prices; chips are not simulated.",
         "weeks_tested": gws,
         "use_coach": False,
-        "transfer_friction": friction,
+        "availability_snapshots": {w["gw"]: w.get("availability_snapshot") for w in weeks},
+        "planner_params": {"transfer_friction": rolling_model.friction, "risk_margin": rolling_model.risk_margin},
+        "transfer_friction": rolling_model.friction,
         "totals": {k: int(sum(w[k] for w in weeks)) for k in ("model_freehit", "naive_freehit", "model_rolling", "naive_rolling", "fpl_average")},
         "model_rolling_vs_fpl_average": margin_stats("model_rolling"),
         "naive_rolling_vs_fpl_average": margin_stats("naive_rolling"),
@@ -396,7 +477,7 @@ def main() -> None:
     ap.add_argument("--from-gw", type=int, default=3)
     ap.add_argument("--to-gw", type=int, default=0, help="last GW to test (default: last fully finished GW)")
     ap.add_argument("--no-coach", action="store_true", help="disable the AI coach deltas")
-    ap.add_argument("--friction", type=float, default=1.5, help="xP friction charged per transfer in the rolling planner")
+    ap.add_argument("--friction", type=float, default=None, help="xP friction charged per transfer (default: data/planner_params.json or 1.5)")
     ap.add_argument("--no-save", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()

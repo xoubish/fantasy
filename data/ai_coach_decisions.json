@@ -1,33 +1,43 @@
 {
-  "91": {
-    "player_id": 91,
-    "web_name": "Pinnock",
-    "team_short": "COV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.43,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Elite 9.2 cbit/90 (+2pt floor magnet); strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
-  },
   "145": {
     "player_id": 145,
     "web_name": "Fofana",
     "team_short": "CHE",
     "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.4,
+    "tactical_xp_delta": 0.65,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.03,
-    "coach_note": "[CS FORTRESS] Hot streak (+1.1 ewma momentum); strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
+    "coach_note": "[CS FORTRESS] Elite 10.8 cbit/90 (+2pt floor magnet); hot streak (+0.9 ewma momentum)."
   },
-  "112": {
-    "player_id": 112,
-    "web_name": "Van Hecke",
-    "team_short": "TOT",
+  "161": {
+    "player_id": 161,
+    "web_name": "Lavia",
+    "team_short": "CHE",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.47,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 12.1 cbit/90 (+2pt floor magnet); hot streak (+0.8 ewma momentum)."
+  },
+  "149": {
+    "player_id": 149,
+    "web_name": "Colwill",
+    "team_short": "CHE",
     "role_tag": "CS FORTRESS",
     "tactical_xp_delta": 0.4,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.03,
-    "coach_note": "[CS FORTRESS] Hot streak (+0.8 ewma momentum); strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+    "coach_note": "[CS FORTRESS] Hot streak (+0.9 ewma momentum); strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
+  },
+  "151": {
+    "player_id": 151,
+    "web_name": "Acheampong",
+    "team_short": "CHE",
+    "role_tag": "CS FORTRESS",
+    "tactical_xp_delta": 0.4,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[CS FORTRESS] Hot streak (+0.8 ewma momentum); strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
   },
   "41": {
     "player_id": 41,
@@ -39,15 +49,25 @@
     "haul_prob_boost": 0.06,
     "coach_note": "[3-GW GREEN RUN TARGET] 1st-choice penalties vs vulnerable defence; strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
   },
-  "183": {
-    "player_id": 183,
-    "web_name": "Rudoni",
-    "team_short": "COV",
+  "154": {
+    "player_id": 154,
+    "web_name": "Palmer",
+    "team_short": "CHE",
+    "role_tag": "EXPLOSIVE TALISMAN",
+    "tactical_xp_delta": 0.28,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.06,
+    "coach_note": "[EXPLOSIVE TALISMAN] 1st-choice penalties vs vulnerable defence; strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
+  },
+  "368": {
+    "player_id": 368,
+    "web_name": "Szoboszlai",
+    "team_short": "LIV",
     "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.28,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.06,
-    "coach_note": "[3-GW GREEN RUN TARGET] 1st-choice penalties vs vulnerable defence; strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+    "coach_note": "[3-GW GREEN RUN TARGET] 1st-choice penalties vs vulnerable defence; strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
   },
   "526": {
     "player_id": 526,
@@ -59,15 +79,35 @@
     "haul_prob_boost": 0.06,
     "coach_note": "[3-GW GREEN RUN TARGET] 1st-choice penalties vs vulnerable defence; strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
   },
-  "161": {
-    "player_id": 161,
-    "web_name": "Lavia",
-    "team_short": "CHE",
+  "47": {
+    "player_id": 47,
+    "web_name": "Kamara",
+    "team_short": "AVL",
     "role_tag": "CBIT FLOOR ANCHOR",
     "tactical_xp_delta": 0.25,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
-    "coach_note": "[CBIT FLOOR ANCHOR] Elite 12.1 cbit/90 (+2pt floor magnet); strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.7 cbit/90 (+2pt floor magnet); strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
+  },
+  "54": {
+    "player_id": 54,
+    "web_name": "Gomes",
+    "team_short": "AVL",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.7 cbit/90 (+2pt floor magnet); strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
+  },
+  "91": {
+    "player_id": 91,
+    "web_name": "Pinnock",
+    "team_short": "COV",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 9.2 cbit/90 (+2pt floor magnet); strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
   },
   "153": {
     "player_id": 153,
@@ -77,7 +117,7 @@
     "tactical_xp_delta": 0.25,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
-    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.2 cbit/90 (+2pt floor magnet); strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 9.9 cbit/90 (+2pt floor magnet); strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
   },
   "202": {
     "player_id": 202,
@@ -87,7 +127,37 @@
     "tactical_xp_delta": 0.25,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
-    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.0 cbit/90 (+2pt floor magnet); strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 11.4 cbit/90 (+2pt floor magnet); strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+  },
+  "203": {
+    "player_id": 203,
+    "web_name": "Canvot",
+    "team_short": "CRY",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.6 cbit/90 (+2pt floor magnet); strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+  },
+  "240": {
+    "player_id": 240,
+    "web_name": "Iroegbunam",
+    "team_short": "HUL",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 11.5 cbit/90 (+2pt floor magnet); strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
+  },
+  "571": {
+    "player_id": 571,
+    "web_name": "Florentino",
+    "team_short": "IPS",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 12.2 cbit/90 (+2pt floor magnet); strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
   },
   "619": {
     "player_id": 619,
@@ -99,6 +169,66 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[CBIT FLOOR ANCHOR] Elite 11.9 cbit/90 (+2pt floor magnet); strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
   },
+  "356": {
+    "player_id": 356,
+    "web_name": "Virgil",
+    "team_short": "LIV",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 9.5 cbit/90 (+2pt floor magnet); strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
+  },
+  "498": {
+    "player_id": 498,
+    "web_name": "Senesi",
+    "team_short": "TOT",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 10.6 cbit/90 (+2pt floor magnet); strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "525": {
+    "player_id": 525,
+    "web_name": "Fernandes",
+    "team_short": "TOT",
+    "role_tag": "CBIT FLOOR ANCHOR",
+    "tactical_xp_delta": 0.25,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[CBIT FLOOR ANCHOR] Elite 11.1 cbit/90 (+2pt floor magnet); strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "46": {
+    "player_id": 46,
+    "web_name": "Barkley",
+    "team_short": "AVL",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[3-GW GREEN RUN TARGET] Hot streak (+1.0 ewma momentum); strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
+  },
+  "166": {
+    "player_id": 166,
+    "web_name": "N.Jackson",
+    "team_short": "AVL",
+    "role_tag": "MOMENTUM BREAKOUT",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[MOMENTUM BREAKOUT] Hot streak (+1.1 ewma momentum); strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
+  },
+  "492": {
+    "player_id": 492,
+    "web_name": "Awoniyi",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[3-GW GREEN RUN TARGET] Hot streak (+1.4 ewma momentum); strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
   "295": {
     "player_id": 295,
     "web_name": "McBurnie",
@@ -107,7 +237,47 @@
     "tactical_xp_delta": 0.22,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.03,
-    "coach_note": "[MOMENTUM BREAKOUT] Hot streak (+0.9 ewma momentum); strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
+    "coach_note": "[MOMENTUM BREAKOUT] Hot streak (+1.4 ewma momentum); strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
+  },
+  "591": {
+    "player_id": 591,
+    "web_name": "Enciso",
+    "team_short": "IPS",
+    "role_tag": "MOMENTUM BREAKOUT",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[MOMENTUM BREAKOUT] Hot streak (+0.8 ewma momentum); strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
+  },
+  "112": {
+    "player_id": 112,
+    "web_name": "Van Hecke",
+    "team_short": "TOT",
+    "role_tag": "MOMENTUM BREAKOUT",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[MOMENTUM BREAKOUT] Hot streak (+0.7 ewma momentum); strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "401": {
+    "player_id": 401,
+    "web_name": "Marmoush",
+    "team_short": "TOT",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.22,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[3-GW GREEN RUN TARGET] Hot streak (+0.9 ewma momentum); strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
+  },
+  "4": {
+    "player_id": 4,
+    "web_name": "Gabriel",
+    "team_short": "ARS",
+    "role_tag": "CS FORTRESS",
+    "tactical_xp_delta": 0.65,
+    "horizon_3gw_bonus": 0.0,
+    "haul_prob_boost": 0.03,
+    "coach_note": "[CS FORTRESS] Elite 9.5 cbit/90 (+2pt floor magnet); hot streak (+0.7 ewma momentum)."
   },
   "60": {
     "player_id": 60,
@@ -117,7 +287,17 @@
     "tactical_xp_delta": 0.65,
     "horizon_3gw_bonus": 0.0,
     "haul_prob_boost": 0.03,
-    "coach_note": "[CS FORTRESS] Elite 9.9 cbit/90 (+2pt floor magnet); hot streak (+0.7 ewma momentum)."
+    "coach_note": "[CS FORTRESS] Elite 11.8 cbit/90 (+2pt floor magnet); hot streak (+0.9 ewma momentum)."
+  },
+  "106": {
+    "player_id": 106,
+    "web_name": "Thiago",
+    "team_short": "BRE",
+    "role_tag": "EXPLOSIVE TALISMAN",
+    "tactical_xp_delta": 0.65,
+    "horizon_3gw_bonus": 0.0,
+    "haul_prob_boost": 0.1,
+    "coach_note": "[EXPLOSIVE TALISMAN] High club chance-creation supply; 1st-choice penalties vs vulnerable defence."
   },
   "34": {
     "player_id": 34,
@@ -159,26 +339,6 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[CS FORTRESS] Strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
   },
-  "149": {
-    "player_id": 149,
-    "web_name": "Colwill",
-    "team_short": "CHE",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
-  },
-  "151": {
-    "player_id": 151,
-    "web_name": "Acheampong",
-    "team_short": "CHE",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
-  },
   "152": {
     "player_id": 152,
     "web_name": "Palestra",
@@ -198,116 +358,6 @@
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
     "coach_note": "[CS FORTRESS] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
-  },
-  "110": {
-    "player_id": 110,
-    "web_name": "Rushworth",
-    "team_short": "COV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
-  },
-  "175": {
-    "player_id": 175,
-    "web_name": "van Ewijk",
-    "team_short": "COV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
-  },
-  "176": {
-    "player_id": 176,
-    "web_name": "Dasilva",
-    "team_short": "COV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
-  },
-  "350": {
-    "player_id": 350,
-    "web_name": "A.Becker",
-    "team_short": "LIV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "356": {
-    "player_id": 356,
-    "web_name": "Virgil",
-    "team_short": "LIV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "358": {
-    "player_id": 358,
-    "web_name": "Kerkez",
-    "team_short": "LIV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "362": {
-    "player_id": 362,
-    "web_name": "Jacquet",
-    "team_short": "LIV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "579": {
-    "player_id": 579,
-    "web_name": "Araujo",
-    "team_short": "LIV",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "496": {
-    "player_id": 496,
-    "web_name": "Kinsky",
-    "team_short": "TOT",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
-  },
-  "502": {
-    "player_id": 502,
-    "web_name": "Robertson",
-    "team_short": "TOT",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
-  },
-  "503": {
-    "player_id": 503,
-    "web_name": "Van de Ven",
-    "team_short": "TOT",
-    "role_tag": "CS FORTRESS",
-    "tactical_xp_delta": 0.18,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[CS FORTRESS] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
   },
   "45": {
     "player_id": 45,
@@ -329,6 +379,26 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
   },
+  "183": {
+    "player_id": 183,
+    "web_name": "Rudoni",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.15,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
+  "184": {
+    "player_id": 184,
+    "web_name": "Grimes",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.15,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
   "210": {
     "player_id": 210,
     "web_name": "Wharton",
@@ -338,6 +408,26 @@
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+  },
+  "211": {
+    "player_id": 211,
+    "web_name": "Yeremy",
+    "team_short": "CRY",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.15,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+  },
+  "286": {
+    "player_id": 286,
+    "web_name": "Belloumi",
+    "team_short": "HUL",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.15,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
   },
   "290": {
     "player_id": 290,
@@ -369,9 +459,9 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Set-piece delivery/aerial threat; strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
   },
-  "47": {
-    "player_id": 47,
-    "web_name": "Kamara",
+  "53": {
+    "player_id": 53,
+    "web_name": "Manzambi",
     "team_short": "AVL",
     "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.0,
@@ -379,15 +469,25 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
   },
-  "166": {
-    "player_id": 166,
-    "web_name": "N.Jackson",
-    "team_short": "AVL",
-    "role_tag": "MOMENTUM BREAKOUT",
+  "40": {
+    "player_id": 40,
+    "web_name": "Rogers",
+    "team_short": "CHE",
+    "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.0,
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
-    "coach_note": "[MOMENTUM BREAKOUT] Strong 3-gw run (sun (h) \u2192 ips (a) \u2192 eve (h))."
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
+  },
+  "157": {
+    "player_id": 157,
+    "web_name": "Est\u00eav\u00e3o",
+    "team_short": "CHE",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
   },
   "159": {
     "player_id": 159,
@@ -399,6 +499,36 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (lee (h) \u2192 nfo (a) \u2192 cry (h))."
   },
+  "110": {
+    "player_id": 110,
+    "web_name": "Rushworth",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
+  "175": {
+    "player_id": 175,
+    "web_name": "van Ewijk",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
+  "176": {
+    "player_id": 176,
+    "web_name": "Dasilva",
+    "team_short": "COV",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
+  },
   "185": {
     "player_id": 185,
     "web_name": "Sakamoto",
@@ -409,9 +539,9 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cry (h) \u2192 lee (a) \u2192 ips (h))."
   },
-  "492": {
-    "player_id": 492,
-    "web_name": "Awoniyi",
+  "188": {
+    "player_id": 188,
+    "web_name": "Torp",
     "team_short": "COV",
     "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.0,
@@ -439,9 +569,19 @@
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
   },
-  "203": {
-    "player_id": 203,
-    "web_name": "Canvot",
+  "204": {
+    "player_id": 204,
+    "web_name": "Mitchell",
+    "team_short": "CRY",
+    "role_tag": "3-GW GREEN RUN TARGET",
+    "tactical_xp_delta": 0.0,
+    "horizon_3gw_bonus": 0.45,
+    "haul_prob_boost": 0.0,
+    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
+  },
+  "214": {
+    "player_id": 214,
+    "web_name": "Kamada",
     "team_short": "CRY",
     "role_tag": "3-GW GREEN RUN TARGET",
     "tactical_xp_delta": 0.0,
@@ -458,145 +598,5 @@
     "horizon_3gw_bonus": 0.45,
     "haul_prob_boost": 0.0,
     "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (cov (a) \u2192 hul (h) \u2192 che (a))."
-  },
-  "240": {
-    "player_id": 240,
-    "web_name": "Iroegbunam",
-    "team_short": "HUL",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (bha (h) \u2192 cry (a) \u2192 nfo (h))."
-  },
-  "259": {
-    "player_id": 259,
-    "web_name": "Diop",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "300": {
-    "player_id": 300,
-    "web_name": "Walton",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "304": {
-    "player_id": 304,
-    "web_name": "O'Shea",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "318": {
-    "player_id": 318,
-    "web_name": "Philogene",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "571": {
-    "player_id": 571,
-    "web_name": "Florentino",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "591": {
-    "player_id": 591,
-    "web_name": "Enciso",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "592": {
-    "player_id": 592,
-    "web_name": "Ouattara",
-    "team_short": "IPS",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (tot (a) \u2192 avl (h) \u2192 cov (a))."
-  },
-  "366": {
-    "player_id": 366,
-    "web_name": "Wirtz",
-    "team_short": "LIV",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "627": {
-    "player_id": 627,
-    "web_name": "Barcola",
-    "team_short": "LIV",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (mun (h) \u2192 eve (a) \u2192 sun (h))."
-  },
-  "401": {
-    "player_id": 401,
-    "web_name": "Marmoush",
-    "team_short": "TOT",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
-  },
-  "455": {
-    "player_id": 455,
-    "web_name": "Tonali",
-    "team_short": "TOT",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
-  },
-  "512": {
-    "player_id": 512,
-    "web_name": "Kudus",
-    "team_short": "TOT",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
-  },
-  "514": {
-    "player_id": 514,
-    "web_name": "Tel",
-    "team_short": "TOT",
-    "role_tag": "3-GW GREEN RUN TARGET",
-    "tactical_xp_delta": 0.0,
-    "horizon_3gw_bonus": 0.45,
-    "haul_prob_boost": 0.0,
-    "coach_note": "[3-GW GREEN RUN TARGET] Strong 3-gw run (ips (h) \u2192 sun (a) \u2192 ful (h))."
   }
 }

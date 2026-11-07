@@ -438,6 +438,20 @@ def _print_model_metrics(net) -> None:
         f"    Minutes log-loss {h.get('minutes_logloss')} (base rate {h.get('minutes_logloss_baseline')}) | "
         f"haul Brier {h.get('haul_brier')} (base rate {h.get('haul_brier_baseline')})"
     )
+    played = h.get("played60") or {}
+    selection = (m.get("evaluation") or {}).get("selection") or {}
+    if played:
+        print(
+            f"    Given 60+ minutes ({played.get('n')} rows, output '{m.get('points_output', 'direct')}'): "
+            f"MAE {played.get('mae_points')} (naive {played.get('mae_naive_baseline')}) | "
+            f"corr {played.get('corr_points')} (naive {played.get('corr_naive_baseline')})"
+        )
+    if selection.get("top11_actual_per_week"):
+        t11, cap = selection["top11_actual_per_week"], selection["captain_actual_per_week"]
+        print(
+            f"    Per test week, actual points of the top-11 picks: model {t11['model']} vs naive {t11['naive']} | "
+            f"captain pick: model {cap['model']} vs naive {cap['naive']}"
+        )
 
 
 def cmd_train_nn(args: argparse.Namespace) -> None:

@@ -10,7 +10,7 @@ import numpy as np
 
 from fpl_data import DATA_DIR
 from historical_data import MANIFEST_PATH, build_historical_samples, current_season_start
-from neural_model import FEATURE_NAMES, MODEL_VERSION, FPLNeuralNetwork, Sample, _softmax
+from neural_model import COMPONENT_NAMES, FEATURE_NAMES, MODEL_VERSION, POINTS_OUTPUTS, FPLNeuralNetwork, Sample, _softmax
 
 FEATURE_CACHE = DATA_DIR / "historical_features.npz"
 EVALUATION_MODEL = DATA_DIR / "historical_evaluation_weights.json"
@@ -30,17 +30,21 @@ def load_samples():
     signature = archive_signature()
     if FEATURE_CACHE.exists():
         with np.load(FEATURE_CACHE, allow_pickle=False) as data:
-            if str(data["signature"]) == signature:
-                return [Sample(x.tolist(), int(m), float(p), int(g), int(pid), float(n), str(season), int(fid))
-                        for x, m, p, g, pid, n, season, fid in zip(*(data[k] for k in
-                            ("features", "minutes", "points", "gw", "player", "naive", "season", "fixture")))]
+            if str(data["signature"]) == signature and "components" in data:
+                return [Sample(x.tolist(), int(m), float(p), int(g), int(pid), float(n), str(season), int(fid),
+                               tuple(c.tolist()), float(ppa))
+                        for x, m, p, g, pid, n, season, fid, c, ppa in zip(*(data[k] for k in
+                            ("features", "minutes", "points", "gw", "player", "naive", "season", "fixture",
+                             "components", "naive_ppa")))]
     samples = build_historical_samples()
     np.savez_compressed(FEATURE_CACHE, signature=signature,
                         features=np.asarray([s.features for s in samples]),
                         minutes=[s.minutes for s in samples], points=[s.points for s in samples],
                         gw=[s.gw for s in samples], player=[s.player_id for s in samples],
                         naive=[s.naive_xp for s in samples], season=[s.season for s in samples],
-                        fixture=[s.fixture_id for s in samples])
+                        fixture=[s.fixture_id for s in samples],
+                        components=np.asarray([list(s.components) or [0.0] * len(COMPONENT_NAMES) for s in samples]),
+                        naive_ppa=[s.naive_ppa for s in samples])
     return samples
 
 
@@ -89,44 +93,72 @@ def fit_calibration(net, samples):
 
 
 def selection_metrics(net, samples):
-    """Rank and calibration metrics among the players on whom decisions concentrate."""
+    """Rank and calibration metrics among the players on whom decisions concentrate.
+
+    Per week, the eleven highest predicted players (ignoring squad rules) and the top
+    predicted captain are scored with their actual points, for the model and for the naive
+    baseline, so a prediction change is judged by the points it would have selected.
+    """
     r = net.predict_batch([s.features for s in samples])
     xp = r["expected_points"]
     actual = np.asarray([s.points for s in samples])
+    naive = np.asarray([s.naive_xp for s in samples])
     groups = {}
     for i, sample in enumerate(samples):
         groups.setdefault((sample.season, sample.gw, sample.player_id), []).append(i)
     weeks = {}
     for (season, gw, pid), indices in groups.items():
-        weeks.setdefault((season, gw), []).append((float(xp[indices].sum()), float(actual[indices].sum())))
-    selected, captains = [], []
+        weeks.setdefault((season, gw), []).append((float(xp[indices].sum()), float(actual[indices].sum()),
+                                                   float(naive[indices].sum())))
+    selected, captains, top11_model, top11_naive, cap_model, cap_naive = [], [], [], [], [], []
     for rows in weeks.values():
-        rows.sort(reverse=True)
-        selected.extend(rows[:15])
-        captains.append(rows[0])
+        by_model = sorted(rows, key=lambda t: -t[0])
+        by_naive = sorted(rows, key=lambda t: -t[2])
+        selected.extend((t[0], t[1]) for t in by_model[:15])
+        captains.append((by_model[0][0], by_model[0][1]))
+        top11_model.append(sum(t[1] for t in by_model[:11]))
+        top11_naive.append(sum(t[1] for t in by_naive[:11]))
+        cap_model.append(by_model[0][1])
+        cap_naive.append(by_naive[0][1])
+
     def metrics(rows):
         a = np.asarray(rows)
         return {"n": len(rows), "mean_predicted": round(float(a[:, 0].mean()), 3),
                 "mean_actual": round(float(a[:, 1].mean()), 3),
                 "bias": round(float((a[:, 0] - a[:, 1]).mean()), 3)}
-    return {"top15_per_week": metrics(selected), "top_captain_per_week": metrics(captains)}
+    return {"top15_per_week": metrics(selected), "top_captain_per_week": metrics(captains),
+            "weeks": len(weeks),
+            "top11_actual_per_week": {"model": round(float(np.mean(top11_model)), 2),
+                                      "naive": round(float(np.mean(top11_naive)), 2)},
+            "captain_actual_per_week": {"model": round(float(np.mean(cap_model)), 2),
+                                        "naive": round(float(np.mean(cap_naive)), 2)}}
 
 
-def fit_for_season(samples, season, max_epochs=35, verbose=False):
+def fit_for_season(samples, season, max_epochs=60, verbose=False):
+    """Select loss, epoch count and points output (direct head, component sum or their average)
+    on validation RMSE, calibrate on separate weeks, then evaluate once on the test weeks."""
     train, validation, calibration, test = split_historical(samples, season)
     candidates = []
     for loss in ("huber", "mse"):
         net = FPLNeuralNetwork(points_loss=loss)
-        best = {"rmse": float("inf"), "epoch": 0, "params": None}
+        best = {output: {"rmse": float("inf"), "epoch": 0, "params": None} for output in POINTS_OUTPUTS}
+
         def checkpoint(epoch, model):
-            score = model.evaluate(validation)["rmse_points"]
-            if score < best["rmse"]:
-                best.update(rmse=score, epoch=epoch, params=model.clone_params())
+            for output in POINTS_OUTPUTS:
+                model.points_output = output
+                score = model.evaluate(validation)["rmse_points"]
+                if score < best[output]["rmse"]:
+                    best[output].update(rmse=score, epoch=epoch, params=model.clone_params())
+            model.points_output = "direct"
         net.train(train, epochs=max_epochs, on_epoch_end=checkpoint)
-        net.params = best["params"]
-        candidates.append((best["rmse"], net, best["epoch"]))
-        if verbose:
-            print(f"{season}: {loss}, validation RMSE {best['rmse']:.4f}, epoch {best['epoch']}", flush=True)
+        for output in POINTS_OUTPUTS:
+            candidate = FPLNeuralNetwork(points_loss=loss, points_output=output)
+            candidate.params = best[output]["params"]
+            for attr in ("mu", "sigma", "cameo_points", "component_constants", "baselines"):
+                setattr(candidate, attr, getattr(net, attr))
+            candidates.append((best[output]["rmse"], candidate, best[output]["epoch"]))
+            if verbose:
+                print(f"{season}: {loss}/{output}, validation RMSE {best[output]['rmse']:.4f}, epoch {best[output]['epoch']}", flush=True)
     _, net, epochs = min(candidates, key=lambda item: item[0])
     uncalibrated = net.evaluate(test)
     fit_calibration(net, calibration)
@@ -134,8 +166,9 @@ def fit_for_season(samples, season, max_epochs=35, verbose=False):
               "calibration_samples": len(calibration), "test_samples": len(test),
               "split": {"train": f"earlier seasons + {season} GW1-10", "validation": f"{season} GW11-14",
                         "calibration": f"{season} GW15-18", "test": f"{season} GW19-38"},
-              "chosen_loss": net.points_loss, "chosen_epochs": epochs,
-              "candidates": [{"loss": n.points_loss, "validation_rmse": score, "epochs": ep} for score, n, ep in candidates],
+              "chosen_loss": net.points_loss, "chosen_output": net.points_output, "chosen_epochs": epochs,
+              "candidates": [{"loss": n.points_loss, "output": n.points_output, "validation_rmse": round(score, 4), "epochs": ep}
+                             for score, n, ep in candidates],
               "uncalibrated_test": uncalibrated, "test": net.evaluate(test),
               "selection": selection_metrics(net, test), "calibration": net.calibration}
     net.metrics = {"historical_only": True, "coach_adjustments": False, "evaluation_season": season}
@@ -148,11 +181,12 @@ def train_historical_model(verbose=False):
     probe, report = fit_for_season(samples, seasons[-1], verbose=verbose)
     probe.save(EVALUATION_MODEL)
     # Evaluation is finished before deployment refits on all completed seasons.
-    final = FPLNeuralNetwork(points_loss=report["chosen_loss"])
+    final = FPLNeuralNetwork(points_loss=report["chosen_loss"], points_output=report["chosen_output"])
     final.train(samples, epochs=report["chosen_epochs"])
     final.calibration = json.loads(json.dumps(probe.calibration))
     final.metrics = {
-        "version": MODEL_VERSION, "architecture": f"{len(FEATURE_NAMES)} -> 48 -> 24 -> [minutes | points | haul]",
+        "version": MODEL_VERSION, "architecture": f"{len(FEATURE_NAMES)} -> 48 -> 24 -> [minutes | points | haul | components]",
+        "points_output": report["chosen_output"],
         "historical_only": True, "coach_adjustments": False, "training_signature": archive_signature(),
         "training_seasons": seasons, "samples_by_season": dict(Counter(s.season for s in samples)),
         "real_gw_samples": len(samples), "latest_trained_gw": 38,

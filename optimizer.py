@@ -20,6 +20,9 @@ Objective (maximised):
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -33,6 +36,28 @@ XI_MIN = {"GKP": 1, "DEF": 3, "MID": 2, "FWD": 1}
 XI_MAX = {"GKP": 1, "DEF": 5, "MID": 5, "FWD": 3}
 HIT_COST = 4.0
 MAX_FREE_TRANSFERS = 5
+
+
+PLANNER_PARAMS_PATH = Path(__file__).parent / "data" / "planner_params.json"
+DEFAULT_PLANNER_PARAMS = {"transfer_friction": 1.5, "risk_margin": 0.5}
+
+
+def load_planner_params() -> Dict[str, float]:
+    """Transfer friction and estimation-risk margin.
+
+    Defaults are hand-set. `historical_backtest.py --tune` sweeps them on historical GW11-18
+    weeks only (never on GW19-38 test weeks) and writes the selection to data/planner_params.json.
+    """
+    params = dict(DEFAULT_PLANNER_PARAMS)
+    if PLANNER_PARAMS_PATH.exists():
+        try:
+            stored = json.loads(PLANNER_PARAMS_PATH.read_text(encoding="utf-8"))
+            for key in DEFAULT_PLANNER_PARAMS:
+                if key in stored:
+                    params[key] = float(stored[key])
+        except (ValueError, OSError):
+            pass
+    return params
 
 
 @dataclass
@@ -385,8 +410,8 @@ def plan_transfers(
     wildcard_week_index: Optional[int] = None,
     max_per_club: int = 3,
     time_limit: float = 45.0,
-    transfer_friction: float = 1.5,
-    risk_margin: float = 0.5,
+    transfer_friction: Optional[float] = None,
+    risk_margin: Optional[float] = None,
 ) -> Optional[TransferPlan]:
     """
     Multi-week transfer plan from `initial_squad` (list of player ids).
@@ -394,6 +419,11 @@ def plan_transfers(
     transfer costs 4 points.  Set `wildcard_week_index` to make that week's transfers free.
     `transfer_friction` (xP) is charged on every transfer so marginal swaps are not made.
     """
+    params = load_planner_params()
+    if transfer_friction is None:
+        transfer_friction = params["transfer_friction"]
+    if risk_margin is None:
+        risk_margin = params["risk_margin"]
     weights = [week_decay**k for k in range(len(gws))]
     unlimited = [wildcard_week_index] if wildcard_week_index is not None else []
     x, V, status = _solve(

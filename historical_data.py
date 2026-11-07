@@ -16,12 +16,16 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
-from fpl_data import CACHE_BOOTSTRAP, DATA_DIR, POSITION_MAP, USER_AGENT, compute_team_strengths
+from fpl_data import CACHE_BOOTSTRAP, DATA_DIR, POSITION_MAP, USER_AGENT
+from team_ratings import archived_matches, ratings_at
 
 ARCHIVE_DIR = DATA_DIR / "historical"
 MANIFEST_PATH = DATA_DIR / "historical_manifest.json"
 REPOSITORY = "vaastav/Fantasy-Premier-League"
 FILES = ("gws/merged_gw.csv", "fixtures.csv", "players_raw.csv", "teams.csv")
+# The season before the first training season supplies prior-season player rates and
+# match results for cross-season team ratings. Its match logs are never training rows.
+CONTEXT_FILES = ("fixtures.csv", "players_raw.csv", "teams.csv")
 
 
 @lru_cache(maxsize=1)
@@ -50,14 +54,15 @@ def sync_historical_data(seasons=None, refresh=False) -> dict:
     seasons = seasons or [season_name(y) for y in range(max(2022, latest - 4), latest)]
     if any(int(s[:4]) >= latest for s in seasons):
         raise ValueError("Historical training accepts completed seasons only.")
+    context_season = season_name(min(int(s[:4]) for s in seasons) - 1)
     old = json.loads(MANIFEST_PATH.read_text()) if MANIFEST_PATH.exists() else {}
-    if not refresh and old.get("seasons") == seasons:
+    jobs = [f"{season}/{file}" for season in seasons for file in FILES] + [f"{context_season}/{file}" for file in CONTEXT_FILES]
+    if not refresh and old.get("seasons") == seasons and old.get("context_season") == context_season:
         if all((ARCHIVE_DIR / name).exists() and hashlib.sha256((ARCHIVE_DIR / name).read_bytes()).hexdigest() == meta["sha256"]
-               for name, meta in old.get("files", {}).items()) and len(old.get("files", {})) == len(seasons) * len(FILES):
+               for name, meta in old.get("files", {}).items()) and set(old.get("files", {})) == set(jobs):
             return old
     commit = old.get("commit") if old.get("seasons") == seasons and not refresh else None
     commit = commit or json.loads(_download(f"https://api.github.com/repos/{REPOSITORY}/commits/master"))["sha"]
-    jobs = [f"{season}/{file}" for season in seasons for file in FILES]
 
     def fetch(name):
         url = f"https://raw.githubusercontent.com/{REPOSITORY}/{commit}/data/{name}"
@@ -71,7 +76,8 @@ def sync_historical_data(seasons=None, refresh=False) -> dict:
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         downloaded = list(pool.map(fetch, jobs))
     manifest = {"repository": f"https://github.com/{REPOSITORY}", "license": "MIT", "commit": commit,
-                "downloaded_at": datetime.now(timezone.utc).isoformat(), "seasons": seasons, "files": {}}
+                "downloaded_at": datetime.now(timezone.utc).isoformat(), "seasons": seasons,
+                "context_season": context_season, "files": {}}
     for name, content, meta in downloaded:
         path = ARCHIVE_DIR / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,36 +155,42 @@ def load_season(season: str) -> dict:
         kickoff = datetime.fromisoformat(f["kickoff_time"].replace("Z", "+00:00"))
         deadline = (kickoff - timedelta(minutes=90)).isoformat().replace("+00:00", "Z")
         deadlines[f["event"]] = min(deadlines.get(f["event"], deadline), deadline)
-    # End-of-season strength/FDR fields are deliberately excluded.
-    neutral = {"teams": [{"id": tid, "strength_overall_home": 3, "strength_overall_away": 3} for tid in teams]}
-    ratings = {gw: compute_team_strengths(neutral, [f for f in fixtures if f["kickoff_time"] < cutoff])
+    # End-of-season strength/FDR fields are deliberately excluded. Team ratings come from the
+    # cross-season Poisson model fitted on every archived match before each deadline.
+    codes = {tid: int(number(row.get("code"))) for tid, row in teams.items()}
+    matches = archived_matches()
+    ratings = {gw: ratings_at(datetime.fromisoformat(cutoff.replace("Z", "+00:00")), matches)
                for gw, cutoff in deadlines.items()}
-    return {"season": season, "players": dict(by_player), "teams": teams,
+    return {"season": season, "players": dict(by_player), "teams": teams, "codes": codes,
             "fixtures": fixtures, "deadlines": deadlines, "ratings": ratings,
             "duplicate_rows_removed": duplicate_rows, "manager_rows_excluded": manager_rows}
 
 
+PRIOR_COLUMNS = ("minutes", "total_points", "expected_goals", "expected_assists", "expected_goals_conceded",
+                 "defensive_contribution", "ict_index", "bps", "saves", "bonus", "goals_scored", "assists",
+                 "clean_sheets", "yellow_cards")
+
+
 def prior_season_stats(season: str) -> dict:
+    """Previous-season totals by stable FPL code (inputs to `neural_model.prior_rates_from_totals`)."""
     previous = season_name(int(season[:4]) - 1)
     if not (ARCHIVE_DIR / previous / "players_raw.csv").exists():
         return {}
     # Stable FPL code is used across seasons; element IDs are never joined across years.
-    return {int(r["code"]): (number(r.get("total_points")), number(r.get("minutes")))
+    return {int(r["code"]): {column: number(r.get(column)) for column in PRIOR_COLUMNS}
             for r in csv_rows(previous, "players_raw.csv") if number(r.get("code"))}
 
 
 def fixture_features(archive: dict, row: dict) -> dict:
-    home = row["was_home"]
+    """Point-in-time fixture context for a match row: Poisson expected goals and display ratings."""
     ratings = archive["ratings"][row["round"]]
-    own, opp = ratings[row["team_id"]], ratings[int(row["opponent_team"])]
-    return {"is_home": home, "team_att": own["att_home" if home else "att_away"],
-            "team_def": own["def_home" if home else "def_away"],
-            "opp_att": opp["att_away" if home else "att_home"],
-            "opp_def": opp["def_away" if home else "def_home"], "difficulty": 3}
+    own = archive["codes"].get(row["team_id"])
+    opp = archive["codes"].get(int(row["opponent_team"]))
+    return ratings.fixture_context(own, opp, row["was_home"]) | {"difficulty": 3}
 
 
 def build_historical_samples():
-    from neural_model import Sample, features_from_history
+    from neural_model import Sample, components_from_row, features_from_history, prior_rates_from_totals
     if not MANIFEST_PATH.exists():
         raise RuntimeError("Historical training is required. Run `python3 historical_data.py sync` first.")
     manifest = json.loads(MANIFEST_PATH.read_text())
@@ -192,22 +204,46 @@ def build_historical_samples():
             for row in rows:
                 gw = row["round"]
                 prior = [r for r in rows if r["round"] < gw and r["kickoff_time"] < archive["deadlines"][gw]]
-                pts, mins = previous.get(row["code"], (0, 0))
-                past90 = pts / (mins / 90) if mins >= 450 else 0.0
                 feats = features_from_history(row["position"], prior, fixture_features(archive, row),
-                                              row["value"] / 10, past90, min(1, mins / 3420), False, False,
+                                              row["value"] / 10, prior_rates_from_totals(previous.get(row["code"])),
                                               season_start=int(season[:4]))
+                played = [r for r in prior if r["minutes"] > 0]
+                ppa = sum(r["total_points"] for r in played) / len(played) if played else 0.0
                 naive = sum(r["total_points"] for r in prior) / len(prior) if prior else 0.0
                 samples.append(Sample(feats, int(row["minutes"]), row["total_points"], gw, pid, naive,
-                                      season=season, fixture_id=row["fixture"]))
+                                      season=season, fixture_id=row["fixture"],
+                                      components=components_from_row(row), naive_ppa=ppa))
     return samples
+
+
+def position_prior_rates(seasons=("2022-23", "2023-24", "2024-25"), min_minutes=450) -> dict:
+    """Recompute `neural_model.POSITION_PRIOR_RATES` from development seasons (players >= min_minutes)."""
+    from statistics import mean
+    source = {"pts": "total_points", "xg": "expected_goals", "xa": "expected_assists", "xgc": "expected_goals_conceded",
+              "def": "defensive_contribution", "ict": "ict_index", "bps": "bps", "saves": "saves", "bonus": "bonus",
+              "goals": "goals_scored", "assists": "assists", "cs": "clean_sheets", "yellow": "yellow_cards"}
+    rates = {pos: {k: [] for k in source} for pos in POSITION_MAP.values()}
+    for season in seasons:
+        for r in csv_rows(season, "players_raw.csv"):
+            minutes = number(r.get("minutes"))
+            if minutes < min_minutes:
+                continue
+            pos = POSITION_MAP.get(int(number(r.get("element_type"))))
+            if pos is None:
+                continue
+            for key, column in source.items():
+                rates[pos][key].append(number(r.get(column)) / (minutes / 90))
+    return {pos: {k: round(mean(v), 2) if v else 0.0 for k, v in cols.items()} for pos, cols in rates.items()}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["sync"])
+    parser.add_argument("command", choices=["sync", "position-priors"])
     parser.add_argument("--refresh", action="store_true")
     args = parser.parse_args()
+    if args.command == "position-priors":
+        print(json.dumps(position_prior_rates(), indent=1))
+        raise SystemExit(0)
     result = sync_historical_data(refresh=args.refresh)
     print(json.dumps({"seasons": result["seasons"], "commit": result["commit"],
                       "match_rows": sum(v["rows"] for k, v in result["files"].items() if k.endswith("merged_gw.csv"))}, indent=2))

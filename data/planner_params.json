@@ -1,0 +1,116 @@
+{
+  "transfer_friction": 0.75,
+  "risk_margin": 0.5,
+  "selected_on": "GW11-18 rolling-manager points, seasons ['2024-25', '2025-26']",
+  "selected_at": "2026-11-07T15:55:08.147337+00:00",
+  "grid": [
+    {
+      "transfer_friction": 0.0,
+      "risk_margin": 0.0,
+      "points": 894,
+      "by_season": {
+        "2024-25": 477,
+        "2025-26": 417
+      }
+    },
+    {
+      "transfer_friction": 0.0,
+      "risk_margin": 0.5,
+      "points": 900,
+      "by_season": {
+        "2024-25": 492,
+        "2025-26": 408
+      }
+    },
+    {
+      "transfer_friction": 0.0,
+      "risk_margin": 1.0,
+      "points": 930,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 442
+      }
+    },
+    {
+      "transfer_friction": 0.75,
+      "risk_margin": 0.0,
+      "points": 892,
+      "by_season": {
+        "2024-25": 469,
+        "2025-26": 423
+      }
+    },
+    {
+      "transfer_friction": 0.75,
+      "risk_margin": 0.5,
+      "points": 936,
+      "by_season": {
+        "2024-25": 494,
+        "2025-26": 442
+      }
+    },
+    {
+      "transfer_friction": 0.75,
+      "risk_margin": 1.0,
+      "points": 930,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 442
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 0.0,
+      "points": 925,
+      "by_season": {
+        "2024-25": 494,
+        "2025-26": 431
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 0.5,
+      "points": 927,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 439
+      }
+    },
+    {
+      "transfer_friction": 1.5,
+      "risk_margin": 1.0,
+      "points": 931,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 443
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 0.0,
+      "points": 927,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 439
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 0.5,
+      "points": 917,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 429
+      }
+    },
+    {
+      "transfer_friction": 2.5,
+      "risk_margin": 1.0,
+      "points": 908,
+      "by_season": {
+        "2024-25": 488,
+        "2025-26": 420
+      }
+    }
+  ]
+}

@@ -60,6 +60,12 @@ class HistoricalSeasonStat:
     expected_goals: float
     expected_assists: float
     bonus: int
+    expected_goals_conceded: float = 0.0
+    defensive_contribution: float = 0.0
+    ict_index: float = 0.0
+    bps: int = 0
+    saves: int = 0
+    yellow_cards: int = 0
 
     @property
     def points_per_90(self) -> float:
@@ -117,6 +123,8 @@ class PlayerRecord:
     upcoming_3gw_fixtures: List[Dict[str, Any]] = field(default_factory=list)  # next HORIZON_GWS gameweeks
     fixture_run_3gw: str = ""
     target_gw: int = 0
+    lambda_for: float = 1.35  # Poisson expected goals for the player's team in the next fixture
+    lambda_against: float = 1.35  # Poisson expected goals against
 
     @property
     def historical_ppg_3yr(self) -> float:
@@ -285,72 +293,53 @@ def archive_live_snapshot() -> Path:
     return path
 
 
+NEUTRAL_FIXTURE = {"opponent": "TBD", "is_home": True, "difficulty": 3, "team_att": 1150, "team_def": 1150,
+                   "opp_att": 1150, "opp_def": 1150, "lambda_for": 1.35, "lambda_against": 1.35}
+
+
+def team_model(
+    bootstrap: Dict[str, Any],
+    fixtures: List[Dict[str, Any]],
+    max_gw: Optional[int] = None,
+    cutoff: Optional[datetime] = None,
+):
+    """Cross-season Poisson team ratings fitted on matches before `cutoff`.
+
+    With `max_gw`, the cutoff is the official deadline of gameweek `max_gw + 1`, so a
+    walk-forward backtest sees exactly the results a manager had at that deadline.
+    Returns (PoissonRatings, {team id: stable team code}).
+    """
+    from team_ratings import combined_matches, ratings_at
+
+    teams = [t for t in bootstrap.get("teams", [])]
+    codes = {int(t["id"]): int(t["code"]) for t in teams if t.get("code") is not None}
+    if cutoff is None:
+        cutoff = datetime.now(timezone.utc)
+        if max_gw is not None:
+            deadline = next((e.get("deadline_time") for e in bootstrap.get("events", []) if int(e.get("id", 0)) == max_gw + 1), None)
+            if deadline:
+                cutoff = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+            else:
+                kickoffs = [f["kickoff_time"] for f in fixtures if int(f.get("event", 0) or 0) == max_gw + 1 and f.get("kickoff_time")]
+                if kickoffs:
+                    cutoff = datetime.fromisoformat(min(kickoffs).replace("Z", "+00:00"))
+    matches = combined_matches(fixtures, teams)
+    return ratings_at(cutoff, matches), codes
+
+
+def fixture_context(model, codes: Dict[int, int], team_id: int, opponent_id: int, is_home: bool) -> Dict[str, Any]:
+    """Feature inputs for `team_id` against `opponent_id` (see `PoissonRatings.fixture_context`)."""
+    return model.fixture_context(codes.get(int(team_id)), codes.get(int(opponent_id)), is_home)
+
+
 def compute_team_strengths(
     bootstrap: Dict[str, Any],
     fixtures: List[Dict[str, Any]],
     max_gw: Optional[int] = None,
 ) -> Dict[int, Dict[str, int]]:
-    """
-    Computes time-decayed real Attack and Defence strength ratings (on the 950-1350 scale)
-    for all 20 Premier League teams using:
-      1. Exponentially time-weighted goals scored (GF/g) and conceded (GA/g) from finished matches
-         (decay = 0.86 per GW back, so the last 3-4 weeks matter much more than GW 1)
-      2. Official `strength_overall_home` / `strength_overall_away` (2 to 5)
-    (The live league-table position is deliberately NOT used: it would leak future
-    information into walk-forward backtests.)
-    """
-    teams = {int(t["id"]): t for t in bootstrap.get("teams", [])}
-    gf_w = {tid: 0.0 for tid in teams}
-    ga_w = {tid: 0.0 for tid in teams}
-    gp_w = {tid: 0.0 for tid in teams}
-
-    finished_fixes = [
-        f
-        for f in fixtures
-        if f.get("finished")
-        and f.get("team_h_score") is not None
-        and (max_gw is None or int(f.get("event", 0) or 0) <= max_gw)
-    ]
-    latest_gw = max(
-        (int(f.get("event", 1) or 1) for f in finished_fixes),
-        default=1,
-    )
-
-    for fix in finished_fixes:
-        gw = int(fix.get("event", 1) or 1)
-        # Exponential recency weight: last week = 1.0, 4 weeks ago = 0.55, 8 weeks ago = 0.30
-        recency_w = 0.86 ** max(0, latest_gw - gw)
-        th, ta = int(fix["team_h"]), int(fix["team_a"])
-        sh, sa = int(fix["team_h_score"]), int(fix["team_a_score"])
-        if th in gf_w:
-            gf_w[th] += sh * recency_w
-            ga_w[th] += sa * recency_w
-            gp_w[th] += recency_w
-        if ta in gf_w:
-            gf_w[ta] += sa * recency_w
-            ga_w[ta] += sh * recency_w
-            gp_w[ta] += recency_w
-
-    ratings: Dict[int, Dict[str, int]] = {}
-    for tid, t in teams.items():
-        n = max(0.5, gp_w[tid])
-        gf_pg = gf_w[tid] / n  # time-weighted goals scored per game
-        ga_pg = ga_w[tid] / n  # time-weighted goals conceded per game
-        # Match the historical feature builder: no end-of-season strength information.
-        str_h = str_a = 3
-
-        # Higher attack rating = team scores more goals recently & has higher overall strength
-        att_base = 1040 + int((gf_pg - 0.65) * 140)
-        # Higher defence rating = team concedes FEWER goals recently & has higher overall strength
-        def_base = 1040 + int((2.35 - ga_pg) * 150)
-
-        ratings[tid] = {
-            "att_home": max(960, min(1360, att_base + str_h * 18)),
-            "def_home": max(960, min(1360, def_base + str_h * 18)),
-            "att_away": max(950, min(1350, att_base + str_a * 12 - 20)),
-            "def_away": max(950, min(1350, def_base + str_a * 12 - 20)),
-        }
-    return ratings
+    """Display ratings (950-1350 style) for every current team, derived from `team_model`."""
+    model, codes = team_model(bootstrap, fixtures, max_gw=max_gw)
+    return {tid: model.display_ratings(codes.get(tid)) for tid in (int(t["id"]) for t in bootstrap.get("teams", []))}
 
 
 def next_editable_gameweek(bootstrap: Dict[str, Any], now: Optional[datetime] = None) -> int:
@@ -399,7 +388,7 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
         for t in bootstrap.get("teams", [])
         if not t.get("unavailable", False)
     }
-    team_ratings = compute_team_strengths(bootstrap, fixtures)
+    model, codes = team_model(bootstrap, fixtures)
 
     if target_gw is None:
         target_gw = next_editable_gameweek(bootstrap)
@@ -415,37 +404,17 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                 ta = int(fix["team_a"])
                 th_obj = teams_by_id.get(th, {})
                 ta_obj = teams_by_id.get(ta, {})
-                r_h = team_ratings.get(
-                    th, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130}
-                )
-                r_a = team_ratings.get(
-                    ta, {"att_home": 1150, "def_home": 1150, "att_away": 1130, "def_away": 1130}
-                )
                 if th in upcoming_3gw_by_team:
                     upcoming_3gw_by_team[th].append(
-                        {
-                            "gw": gw_ev,
-                            "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
-                            "is_home": True,
-                            "difficulty": int(fix.get("team_h_difficulty", 3)),
-                            "team_att": r_h["att_home"],
-                            "team_def": r_h["def_home"],
-                            "opp_att": r_a["att_away"],
-                            "opp_def": r_a["def_away"],
-                        }
+                        {"gw": gw_ev, "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
+                         "difficulty": int(fix.get("team_h_difficulty", 3) or 3)}
+                        | fixture_context(model, codes, th, ta, True)
                     )
                 if ta in upcoming_3gw_by_team:
                     upcoming_3gw_by_team[ta].append(
-                        {
-                            "gw": gw_ev,
-                            "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
-                            "is_home": False,
-                            "difficulty": int(fix.get("team_a_difficulty", 3)),
-                            "team_att": r_a["att_away"],
-                            "team_def": r_a["def_away"],
-                            "opp_att": r_h["att_home"],
-                            "opp_def": r_h["def_home"],
-                        }
+                        {"gw": gw_ev, "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
+                         "difficulty": int(fix.get("team_a_difficulty", 3) or 3)}
+                        | fixture_context(model, codes, ta, th, False)
                     )
 
     next_fix_by_team: Dict[int, Dict[str, Any]] = {
@@ -469,18 +438,7 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
             continue
 
         team_obj = teams_by_id[tid]
-        fix_info = next_fix_by_team.get(
-            tid,
-            {
-                "opponent": "TBD",
-                "is_home": True,
-                "difficulty": 3,
-                "team_att": 1150,
-                "team_def": 1150,
-                "opp_att": 1150,
-                "opp_def": 1150,
-            },
-        )
+        fix_info = next_fix_by_team.get(tid, dict(NEUTRAL_FIXTURE))
 
         pid = int(el["id"])
         mins = int(el.get("minutes", 0) or 0)
@@ -506,6 +464,12 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                 expected_goals=float(p.get("expected_goals", 0.0) or 0.0),
                 expected_assists=float(p.get("expected_assists", 0.0) or 0.0),
                 bonus=int(p.get("bonus", 0) or 0),
+                expected_goals_conceded=float(p.get("expected_goals_conceded", 0.0) or 0.0),
+                defensive_contribution=float(p.get("defensive_contribution", 0.0) or 0.0),
+                ict_index=float(p.get("ict_index", 0.0) or 0.0),
+                bps=int(p.get("bps", 0) or 0),
+                saves=int(p.get("saves", 0) or 0),
+                yellow_cards=int(p.get("yellow_cards", 0) or 0),
             )
             for p in past_list[-3:]
         ]
@@ -584,6 +548,8 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                     f["opponent"] for f in upcoming_3gw_by_team.get(tid, [fix_info])[:3]
                 ),
                 target_gw=int(target_gw),
+                lambda_for=float(fix_info.get("lambda_for", 1.35)),
+                lambda_against=float(fix_info.get("lambda_against", 1.35)),
             )
         )
     return records

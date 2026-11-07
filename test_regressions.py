@@ -1,5 +1,6 @@
 """Offline regression tests for data integrity, FPL accounting and evaluation."""
 import json
+import math
 import gzip
 import tempfile
 import unittest
@@ -328,6 +329,152 @@ class HistoricalTests(unittest.TestCase):
         guarded = optimizer.plan_transfers(**args, risk_margin=.5)
         self.assertEqual(risky.weeks[0].transfers_in, [16])
         self.assertEqual(guarded.weeks[0].transfers_in, [])
+
+
+class TeamRatingTests(unittest.TestCase):
+    def _matches(self):
+        import team_ratings
+        base = datetime(2024, 8, 10, tzinfo=timezone.utc)
+        rows = []
+        for week in range(12):
+            day = base.replace(day=1) if False else base
+            kickoff = datetime(2024, 8, 10, tzinfo=timezone.utc)
+            from datetime import timedelta
+            kickoff = kickoff + timedelta(days=7 * week)
+            rows.append(team_ratings.Match(kickoff, 1, 2, 3, 0))  # club 1 keeps beating club 2 at home
+            rows.append(team_ratings.Match(kickoff, 2, 1, 0, 2) if week % 2 else team_ratings.Match(kickoff, 3, 4, 1, 1))
+        return rows
+
+    def test_ratings_are_point_in_time_and_rank_strength(self):
+        import team_ratings
+        from datetime import timedelta
+        matches = self._matches()
+        cutoff = datetime(2024, 9, 20, tzinfo=timezone.utc)
+        early = team_ratings.PoissonRatings(matches, cutoff)
+        later_only = [m for m in matches if m.kickoff < cutoff]
+        self.assertEqual(early.n_matches, len(later_only))
+        same = team_ratings.PoissonRatings(later_only, cutoff)
+        self.assertAlmostEqual(float(early.expected_goals(1, 2)[0]), float(same.expected_goals(1, 2)[0]))
+        home_for, home_against = early.expected_goals(1, 2)
+        self.assertGreater(home_for, home_against)
+        context = early.fixture_context(2, 1, False)
+        self.assertAlmostEqual(context["lambda_for"], round(home_against, 4))
+        self.assertAlmostEqual(context["lambda_against"], round(home_for, 4))
+        self.assertIn("team_att", context)
+
+    def test_unknown_club_gets_promoted_prior_and_features_tolerate_missing_context(self):
+        import team_ratings
+        model = team_ratings.PoissonRatings(self._matches(), datetime(2024, 10, 1, tzinfo=timezone.utc))
+        self.assertEqual(model._params(999), (team_ratings.PROMOTED_PRIOR, team_ratings.PROMOTED_PRIOR))
+        feats = neural_model.features_from_history("MID", [], {}, 5.0)
+        self.assertEqual(len(feats), neural_model.N_FEATURES)
+        self.assertAlmostEqual(feats[neural_model.FEATURE_NAMES.index("log_lambda_for")], __import__("math").log(neural_model.DEFAULT_LAMBDA))
+
+
+class ComponentModelTests(unittest.TestCase):
+    def test_component_points_follow_official_scoring_rules(self):
+        import math
+        net = neural_model.FPLNeuralNetwork()
+        for key in list(net.params):
+            if key.startswith("W_"):
+                net.params[key][:] = 0.0
+        net.params["b_goals"][:] = math.log(0.5)
+        net.params["b_assists"][:] = math.log(0.25)
+        net.params["b_cs"][:] = 0.0  # P(clean sheet) = 0.5
+        net.params["b_gc"][:] = math.log(1e-6)
+        net.params["b_saves"][:] = math.log(1e-6)
+        net.params["b_bonus"][:] = math.log(0.4)
+        net.params["b_defcon"][:] = 30.0  # certain threshold
+        net.params["b_yellow"][:] = -30.0
+        net.component_constants = [0.0, 0.0, 0.0, 0.0]
+        net.points_output = "component"
+        feats = [0.0] * neural_model.N_FEATURES
+        feats[neural_model.FEATURE_NAMES.index("is_DEF")] = 1.0
+        feats[neural_model.FEATURE_NAMES.index("scoring_2025_onward")] = 1.0
+        xp = net._forward(__import__("numpy").asarray([feats]))["xp_component"][0]
+        expected = 2 + 0.5 * 6 + 0.25 * 3 + 0.5 * 4 + 0.4 + 2
+        self.assertAlmostEqual(float(xp), expected, places=4)
+        feats[neural_model.FEATURE_NAMES.index("scoring_2025_onward")] = 0.0
+        xp_old = net._forward(__import__("numpy").asarray([feats]))["xp_component"][0]
+        self.assertAlmostEqual(float(xp_old), expected - 2, places=4)
+
+    def test_expected_floor_division_matches_enumeration(self):
+        import numpy as np
+        lam = np.array([1.7])
+        value = neural_model.expected_floor_division(lam, 2, k_max=30)[0]
+        enumerated = sum((k // 2) * math.exp(-1.7) * 1.7 ** k / math.factorial(k) for k in range(31))
+        self.assertAlmostEqual(float(value), enumerated, places=6)
+
+    def test_prior_shrinkage_uses_previous_season_rates(self):
+        prior = neural_model.prior_rates_from_totals({"minutes": 2700, "total_points": 180, "expected_goals": 9})
+        self.assertEqual(prior["valid"], 1.0)
+        self.assertAlmostEqual(prior["pts"], 6.0)
+        rec = neural_model.compute_recency_weighted_metrics([], prior=prior, position="MID")
+        self.assertAlmostEqual(rec["ewma_ppg"], 6.0)
+        one_row = [{"round": 1, "minutes": 90, "total_points": 2, "team_h_score": 1, "kickoff_time": "k"}]
+        rec = neural_model.compute_recency_weighted_metrics(one_row, prior=prior, position="MID")
+        self.assertAlmostEqual(rec["ewma_ppg"], (2 + 3 * 6.0) / 4.0)
+        thin = neural_model.prior_rates_from_totals({"minutes": 100, "total_points": 20})
+        self.assertEqual(thin["valid"], 0.0)
+        rec = neural_model.compute_recency_weighted_metrics([], prior=thin, position="FWD")
+        self.assertAlmostEqual(rec["ewma_ppg"], neural_model.POSITION_PRIOR_RATES["FWD"]["pts"])
+
+
+class BacktestBlindingTests(unittest.TestCase):
+    def test_players_without_a_target_week_row_are_excluded(self):
+        fixtures = [{"id": 1, "event": 3, "team_h": 1, "team_a": 2, "kickoff_time": "2026-09-01T14:00:00Z", "finished": True,
+                     "team_h_score": 1, "team_a_score": 0},
+                    {"id": 2, "event": 4, "team_h": 2, "team_a": 1, "kickoff_time": "2026-09-08T14:00:00Z", "finished": True,
+                     "team_h_score": 0, "team_a_score": 0}]
+        bootstrap = {"teams": [{"id": 1, "code": 11, "short_name": "AAA", "name": "A"}, {"id": 2, "code": 22, "short_name": "BBB", "name": "B"}],
+                     "events": [{"id": 4, "deadline_time": "2026-09-07T10:00:00Z"}]}
+        row3 = {"round": 3, "fixture": 1, "was_home": True, "minutes": 90, "total_points": 6, "team_h_score": 1, "team_a_score": 0, "value": 50}
+        row4 = {"round": 4, "fixture": 2, "was_home": False, "minutes": 90, "total_points": 2, "team_h_score": 0, "team_a_score": 0, "value": 50}
+        base = dict(id=0, web_name="x", full_name="x", team_id=2, team_short="BBB", team_name="B", position="MID", price=5.0, status="a",
+                    chance_of_playing_next_round=None, fpl_news="", total_points=0, minutes=0, starts=0, points_per_game=0, form=0,
+                    value_form=0, value_season=0, selected_by_percent=0, xg_per_90=0, xa_per_90=0, xgi_per_90=0, xgc_per_90=0,
+                    defensive_contribution_per_90=0, ict_per_90=0, threat_per_90=0, creativity_per_90=0, saves_per_90=0, clean_sheets=0,
+                    bps_per_90=0, bonus=0, in_dreamteam=False, penalties_order=None, corners_order=None, direct_freekicks_order=None,
+                    next_opponent="", is_home=True, fixture_difficulty=3, team_attack_strength=1150, team_defence_strength=1150,
+                    opp_attack_strength=1150, opp_defence_strength=1150)
+        registered = fpl_data.PlayerRecord(**dict(base, id=1, gw_history=[row3, row4]))
+        later_signing = fpl_data.PlayerRecord(**dict(base, id=2, gw_history=[]))
+        moved_club = fpl_data.PlayerRecord(**dict(base, id=3, team_id=2, gw_history=[row3]))  # GW3 row says home side = team 1
+        with tempfile.TemporaryDirectory() as tmp:
+            bootstrap_path, fixtures_path = Path(tmp) / "bootstrap.json", Path(tmp) / "fixtures.json"
+            bootstrap_path.write_text(json.dumps(bootstrap))
+            fixtures_path.write_text(json.dumps(fixtures))
+            with patch.object(backtest, "load_players", return_value=[registered, later_signing, moved_club]), \
+                 patch.object(backtest, "snapshot_before", return_value=None), \
+                 patch.object(backtest, "CACHE_BOOTSTRAP", bootstrap_path), \
+                 patch.object(backtest, "CACHE_FIXTURES", fixtures_path):
+                blinded, meta = backtest.build_blinded_players_for_gw(4)
+        ids = {p.id for p in blinded}
+        self.assertIn(1, ids)
+        self.assertNotIn(2, ids)
+        self.assertNotIn(3, ids)  # had no GW4 row although its club played: not registered that week
+        self.assertEqual(meta["excluded_unregistered"], 2)
+        self.assertEqual([p.team_id for p in blinded if p.id == 1], [1])
+        self.assertEqual([len(p.gw_history) for p in blinded if p.id == 1], [1])
+
+    def test_snapshot_after_deadline_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            payload = {"observed_at": "2026-09-07T12:00:00+00:00", "bootstrap": {"elements": []}}
+            with gzip.open(directory / "20260907T120000000000Z.json.gz", "wt") as handle:
+                json.dump(payload, handle)
+            with patch.object(backtest, "SNAPSHOT_DIR", directory):
+                self.assertIsNone(backtest.snapshot_before("2026-09-07T10:00:00Z"))
+                self.assertIsNotNone(backtest.snapshot_before("2026-09-08T10:00:00Z"))
+
+
+class PlannerParameterTests(unittest.TestCase):
+    def test_defaults_when_no_selection_file(self):
+        with patch.object(optimizer, "PLANNER_PARAMS_PATH", Path("/nonexistent/planner_params.json")):
+            params = optimizer.load_planner_params()
+        self.assertEqual(params, optimizer.DEFAULT_PLANNER_PARAMS)
+        manager = backtest.RollingManager("x", friction=0.25, risk_margin=0.75)
+        self.assertEqual((manager.friction, manager.risk_margin), (0.25, 0.75))
 
 
 if __name__ == "__main__":

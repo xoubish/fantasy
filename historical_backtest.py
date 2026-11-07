@@ -1,12 +1,19 @@
-"""Fixed-protocol tests on archived seasons, including realistic rolling managers."""
+"""Fixed-protocol tests on archived seasons, including realistic rolling managers.
+
+`--tune` sweeps the planner's transfer friction and estimation-risk margin on GW11-18 of
+each season (weeks that are never part of the GW19-38 test) and writes the selection to
+data/planner_params.json before the test runs.
+"""
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import statistics
 from collections import Counter
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,10 +22,12 @@ from backtest import RollingManager, score_week
 from fpl_data import DATA_DIR
 from historical_data import load_season, prior_season_stats, fixture_features
 from historical_training import load_samples, fit_for_season, EVALUATION_MODEL
-from neural_model import FPLNeuralNetwork, features_from_history, get_or_train_neural_net
-from optimizer import PlanPlayer, select_candidate_pool, solve_squad
+from neural_model import FPLNeuralNetwork, features_from_history, get_or_train_neural_net, prior_rates_from_totals
+from optimizer import PLANNER_PARAMS_PATH, PlanPlayer, load_planner_params, select_candidate_pool, solve_squad
 
 RESULTS_PATH = DATA_DIR / "historical_backtest_results.json"
+FRICTION_GRID = (0.0, 0.75, 1.5, 2.5)
+RISK_GRID = (0.0, 0.5, 1.0)
 
 
 def week_players(archive, net, gw, horizon=3):
@@ -32,8 +41,7 @@ def week_players(archive, net, gw, horizon=3):
             continue
         # Match-row price/position/team are archived metadata, never final-season values.
         snapshot = current[0] if current else prior[-1]
-        pts, mins = previous.get(snapshot["code"], (0, 0))
-        past90 = pts / (mins / 90) if mins >= 450 else 0.0
+        prior_rates = prior_rates_from_totals(previous.get(snapshot["code"]))
         xp, nxp = {}, {}
         n_effective = max(3, sum(.9 ** max(0, gw - 1 - r["round"]) for r in prior if r["minutes"] > 0))
         uncertainty = 0.0
@@ -46,7 +54,7 @@ def week_players(archive, net, gw, horizon=3):
                 context = dict(snapshot, round=gw, was_home=home,
                                opponent_team=fixture["team_a"] if home else fixture["team_h"])
                 features = features_from_history(snapshot["position"], prior, fixture_features(archive, context),
-                                                 snapshot["value"] / 10, past90, min(1, mins / 3420), False, False,
+                                                 snapshot["value"] / 10, prior_rates,
                                                  season_start=int(archive["season"][:4]))
                 out = net.predict_full(features)
                 xp[target] += out["expected_points"]
@@ -59,6 +67,50 @@ def week_players(archive, net, gw, horizon=3):
         naive.append(replace(p, xp_by_gw=nxp))
         positions[pid] = snapshot["position"]
     return model, naive, positions
+
+
+def rolling_points(archive, net, start, end, friction, risk_margin, week_cache=None):
+    """Total realistic-manager points (after hits) for the model over `start`..`end`."""
+    raw = {pid: SimpleNamespace(gw_history=rows) for pid, rows in archive["players"].items()}
+    manager = RollingManager("tune", friction=friction, risk_margin=risk_margin)
+    total = 0
+    for gw in range(start, end + 1):
+        if gw not in archive["deadlines"]:
+            continue
+        if week_cache is not None and gw in week_cache:
+            model, positions = week_cache[gw]
+        else:
+            model, _, positions = week_players(archive, net, gw, min(3, 39 - gw))
+            if week_cache is not None:
+                week_cache[gw] = (model, positions)
+        manager.horizon = min(3, 39 - gw)
+        lineup, bench, captain, vice, hits, _ = manager.step(model, {}, gw)
+        actual, _ = score_week(lineup, bench, captain, vice, positions, raw, gw)
+        total += actual - 4 * hits
+    return total
+
+
+def tune_planner(nets_by_season, start=11, end=18, verbose=True):
+    """Grid-search friction and risk margin on GW11-18 (development weeks) across seasons."""
+    results = []
+    caches = {season: {} for season in nets_by_season}
+    archives = {season: load_season(season) for season in nets_by_season}
+    for friction, risk in itertools.product(FRICTION_GRID, RISK_GRID):
+        total = 0
+        per_season = {}
+        for season, net in nets_by_season.items():
+            points = rolling_points(archives[season], net, start, end, friction, risk, caches[season])
+            per_season[season] = points
+            total += points
+        results.append({"transfer_friction": friction, "risk_margin": risk, "points": total, "by_season": per_season})
+        if verbose:
+            print(f"tune friction={friction} risk={risk}: {total} ({per_season})", flush=True)
+    best = max(results, key=lambda r: (r["points"], -r["transfer_friction"], -r["risk_margin"]))
+    selection = {"transfer_friction": best["transfer_friction"], "risk_margin": best["risk_margin"],
+                 "selected_on": f"GW{start}-{end} rolling-manager points, seasons {sorted(nets_by_season)}",
+                 "selected_at": datetime.now(timezone.utc).isoformat(), "grid": results}
+    PLANNER_PARAMS_PATH.write_text(json.dumps(selection, indent=2) + "\n")
+    return selection
 
 
 def season_strategy_test(net, season, start=19, end=38, verbose=True):
@@ -111,19 +163,28 @@ def season_strategy_test(net, season, start=19, end=38, verbose=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seasons", nargs="+", default=["2024-25", "2025-26"])
+    parser.add_argument("--tune", action="store_true", help="select planner parameters on GW11-18 before testing")
     args = parser.parse_args()
     samples = load_samples()
     deployed = get_or_train_neural_net()
-    results = []
+    nets, evaluations = {}, {}
     for season in args.seasons:
         if season == deployed.metrics["evaluation"]["evaluation_season"]:
-            net, evaluation = FPLNeuralNetwork.load(EVALUATION_MODEL), deployed.metrics["evaluation"]
+            nets[season], evaluations[season] = FPLNeuralNetwork.load(EVALUATION_MODEL), deployed.metrics["evaluation"]
         else:
-            net, evaluation = fit_for_season(samples, season, verbose=True)
-        result = season_strategy_test(net, season)
-        result["prediction_evaluation"] = evaluation
+            nets[season], evaluations[season] = fit_for_season(samples, season, verbose=True)
+    planner = None
+    if args.tune:
+        planner = tune_planner(nets)
+        print(json.dumps({k: v for k, v in planner.items() if k != "grid"}, indent=2))
+    results = []
+    for season in args.seasons:
+        result = season_strategy_test(nets[season], season)
+        result["prediction_evaluation"] = evaluations[season]
         results.append(result)
         RESULTS_PATH.write_text(json.dumps({"protocol": "train through GW10, select on GW11-14, calibrate GW15-18, test GW19-38; no test-row fitting",
+                                           "planner_params": load_planner_params(),
+                                           "planner_selection": {k: v for k, v in (planner or {}).items() if k != "grid"} or "defaults or earlier data/planner_params.json",
                                            "limitations": "Archived final fixture assignments may include later postponements; historical official average scores unavailable. Managers start at GW19 with £100m, no chips, and current-price selling values.",
                                            "seasons": results}, indent=2) + "\n")
     print(json.dumps({r["season"]: r["totals"] for r in results}, indent=2))

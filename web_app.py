@@ -768,6 +768,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const box = document.getElementById("model-box");
       if (!h.mae_points) { box.innerHTML = `<p>Run <code>python3 fpl_assistant.py train-nn</code> to populate.</p>`; return; }
       const top = Object.entries(m.feature_importance || {}).slice(0, 4).map(([k]) => k.replace(/_/g, " ")).join(", ");
+      const sel = (m.evaluation && m.evaluation.selection) || {};
       box.innerHTML = `
         <div class="summary-line"><span>Historical training</span><b>${Number(m.real_gw_samples).toLocaleString()} player-matches · ${esc(m.training_end || "")}</b></div>
         <div class="summary-line"><span>${m.test ? "Held-out test" : "Validation"}</span><b>${esc((m.test ? m.test_gws : m.holdout_gws) || "")} (${(h.n | 0).toLocaleString()} rows)</b></div>
@@ -776,8 +777,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           ${pairBars("Correlation with actual points", h.corr_points, h.corr_naive_baseline, false, f2)}
           ${pairBars("Minutes log-loss (lower is better)", h.minutes_logloss, h.minutes_logloss_baseline, true, f2)}
           ${pairBars("Haul odds Brier (lower is better)", h.haul_brier, h.haul_brier_baseline, true, (x) => Number(x).toFixed(3))}
+          ${h.played60 ? pairBars("Points error when the player plays 60+ (MAE)", h.played60.mae_points, h.played60.mae_naive_baseline, true, f2) : ""}
+          ${h.played60 ? pairBars("Correlation when the player plays 60+", h.played60.corr_points, h.played60.corr_naive_baseline, false, f2) : ""}
         </div>
-        <div class="caveat">Current-season outcomes are excluded from training and tuning. Naive baseline: prior points per fixture.</div><details><summary>Training & evaluation notes</summary><div class="caveat">Trained on ${esc((m.training_seasons || []).join(", "))}. ${m.test ? "Historical test rows are excluded from model selection and calibration." : "Validation is used for model selection."} Deployment is then refit on completed seasons. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms: ${esc(top)}.</div></details>`;
+        ${sel.top11_actual_per_week ? `<div class="summary-line"><span>Actual points of the 11 highest-predicted players, per test week</span><b>${f1(sel.top11_actual_per_week.model)} model · ${f1(sel.top11_actual_per_week.naive)} naive</b></div><div class="summary-line"><span>Actual points of the top captain pick, per test week</span><b>${f1(sel.captain_actual_per_week.model)} model · ${f1(sel.captain_actual_per_week.naive)} naive</b></div>` : ""}
+        <div class="caveat">Current-season outcomes are excluded from training and tuning. Naive baseline: prior points per fixture (per appearance for the 60+ slice). Overall error is dominated by players who do not play; the 60+ slice is the decision-relevant one.</div><details><summary>Training & evaluation notes</summary><div class="caveat">Trained on ${esc((m.training_seasons || []).join(", "))}. ${m.test ? "Historical test rows are excluded from model selection and calibration." : "Validation is used for model selection."} Points output: ${esc(m.points_output || "direct")} (direct head, component sum or their average, chosen on validation weeks). Deployment is then refit on completed seasons. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms: ${esc(top)}.</div></details>`;
     })();
 
     /* ---------- backtest chart ---------- */
@@ -826,7 +830,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="summary-line"><span>Model vs naive, weekly rebuild</span><b>${signed(m2.mean)} ± ${f1(m2.sd)} · won ${m2.weeks_won}/${m2.weeks}</b></div>
           <div class="summary-line"><span>Player-level MAE · correlation</span><b>${f2(pl.model_mae)} vs ${f2(pl.naive_mae)} · ${f2(pl.model_corr)} vs ${f2(pl.naive_corr)}</b></div>
         </div>
-        <div class="caveat">Current-season outcomes are evaluated with fixed historical weights. Form inputs use earlier weeks; roster and club membership use today's snapshot. Short tests cannot establish a reliable edge.</div>`;
+        <div class="caveat">Current-season outcomes are evaluated with fixed historical weights. Form, prices, club membership and team ratings use only earlier weeks; availability flags come from public snapshots saved before each deadline when one exists. Short tests cannot establish a reliable edge.</div>`;
       const historical = DATA.historicalBacktest || [];
       if (historical.length) box.innerHTML += `<h4 class="historical-heading">Further back · ${historical.reduce((n, r) => n + r.weeks, 0)} historical weeks</h4>
         ${historical.map(r => `<div class="summary-line"><span>${esc(r.season)} · model / naive</span><b>${r.totals.model_rolling} / ${r.totals.naive_rolling}</b></div>
