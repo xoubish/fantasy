@@ -3,26 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Touchline — Fantasy football field notes</title>
-  <meta name="description" content="Your fantasy football field notes: six squad ideas, player projections, transfer plans, and an honest look at the results." />
-  <meta name="theme-color" content="#f4f0e7" />
+  <title>Touchline — Matchday control</title>
+  <meta name="description" content="Fantasy football mission control: player projections, six squad configurations, transfer planning, and historical performance." />
+  <meta name="theme-color" content="#080e14" />
+  <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #f4f0e7; --surface: #fbf8f1; --surface-2: #eae5d9;
-      --text: #292d27; --text-2: #4d5349; --muted: #65695e;
-      --line: #d6d3c6; --line-strong: #b7bbab;
-      --accent: #6f293f; --cap: #6f293f; --lime: #e5e6a3;
-      --turf-a: #294f43; --turf-b: #2d5447;
-      --s-model: #385e4c; --s-avg: #783b50; --s-naive: #a57d3a;
-      --serif: 'Source Serif 4', Georgia, serif;
+      color-scheme: dark;
+      --bg: #080e14; --surface: #0e1821; --surface-2: #172530;
+      --text: #e6eef4; --text-2: #b6c6d2; --muted: #8eA3b3;
+      --line: #253744; --line-strong: #446071;
+      --accent: #9ad9f5; --cap: #e1eb8a; --lime: #e1eb8a;
+      --turf-a: #123c2b; --turf-b: #15432f;
+      --s-model: #7bd6ad; --s-avg: #8dbbff; --s-naive: #d5b265;
+      --display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+      --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
       --sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; scroll-padding-top: 24px; }
-    body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    body { background: var(--bg); background-image: radial-gradient(circle at 13px 19px, #94b9d022 .7px, transparent 1px), radial-gradient(circle at 80px 70px, #94b9d015 .7px, transparent 1px); background-size: 173px 157px, 239px 223px; color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
     button, a, summary { -webkit-tap-highlight-color: transparent; }
     button { font: inherit; }
     a { color: inherit; text-underline-offset: 4px; }
@@ -30,108 +33,116 @@
     .skip-link { position: absolute; top: -80px; left: 20px; background: var(--surface); padding: 12px; z-index: 20; }
     .skip-link:focus { top: 12px; }
     .container { max-width: 1280px; margin: 0 auto; padding: 0 40px; }
-    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px 0 20px; border-bottom: 1px solid var(--text); }
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px 0 20px; border-bottom: 1px solid var(--line-strong); }
     .brand { display: flex; gap: 12px; align-items: center; text-decoration: none; }
-    .brand-mark { width: 32px; height: 40px; color: var(--accent); }
-    .wordmark { font: 600 35px/1 var(--serif); letter-spacing: -1.8px; color: var(--accent); }
-    .brand-caption, .eyebrow, .section-label, .k-label, .bench-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.7px; font-weight: 600; }
+    .brand-mark { width: 43px; height: 43px; color: var(--accent); }
+    .wordmark { font: 600 31px/1 var(--display); letter-spacing: 2.8px; color: var(--text); text-transform: uppercase; }
+    .brand-caption, .eyebrow, .section-label, .k-label, .bench-title { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 1.7px; font-weight: 600; }
     .brand-caption { margin-top: 7px; color: var(--muted); font-size: 9px; letter-spacing: 1.2px; }
-    .top-nav { display: flex; gap: 28px; font-size: 12px; }
+    .top-nav { display: flex; gap: 28px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .7px; }
     .top-nav a { text-decoration: none; border-bottom: 1px solid transparent; padding: 8px 0; }
     .top-nav a:hover { border-color: var(--accent); color: var(--accent); }
-    .edition { font-size: 11px; color: var(--muted); }
-    .intro { display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 32px 0; }
+    .edition { font: 10px var(--mono); color: var(--muted); border: 1px solid var(--line); padding: 8px 10px; }
+    .intro { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 32px 0; overflow: hidden; }
+    .intro > div { position: relative; z-index: 1; }
+    .orbital-mark { position: absolute; width: 255px; height: 255px; right: 310px; top: -16px; color: #6c9ab5; opacity: .23; pointer-events: none; }
     .eyebrow { color: var(--accent); margin-bottom: 9px; }
-    h1 { font: 500 clamp(38px, 4.5vw, 60px)/1.08 var(--serif); letter-spacing: -2px; }
-    h1 em { font-weight: 400; color: var(--accent); }
-    .intro-copy { color: var(--text-2); font-size: 13px; margin-top: 12px; max-width: 470px; }
-    .fixture-ticket { display: flex; align-items: center; gap: 22px; padding: 15px 24px; border: 1px solid var(--line-strong); background: var(--lime); transform: rotate(-1.5deg); flex-shrink: 0; }
-    .ticket-number { padding-right: 22px; border-right: 1px dashed #969c70; text-align: center; }
-    .ticket-number span { display: block; font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; }
-    .ticket-number strong { display: block; font: 500 46px/1.05 var(--serif); }
+    h1 { font: 600 clamp(42px, 5.2vw, 70px)/1 var(--display); letter-spacing: 1.3px; text-transform: uppercase; }
+    h1 span { color: var(--accent); }
+    .intro-copy { color: var(--text-2); font-size: 13px; margin-top: 14px; max-width: 470px; }
+    .fixture-ticket { display: flex; align-items: center; gap: 22px; padding: 20px 24px; border: 1px solid var(--line-strong); border-top: 2px solid var(--accent); background: var(--surface); flex-shrink: 0; }
+    .fixture-ticket::after { content: ""; position: absolute; bottom: -1px; right: -1px; width: 12px; height: 12px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+    .ticket-number { padding-right: 22px; border-right: 1px solid var(--line); text-align: center; }
+    .ticket-number span { display: block; font: 9px var(--mono); color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
+    .ticket-number strong { display: block; font: 500 46px/1.2 var(--mono); color: var(--lime); }
     .ticket-info { max-width: 180px; font-size: 12px; }
-    .ticket-info .eyebrow { font-size: 9px; color: #4b573a; margin-bottom: 4px; }
-    .ticket-info time { display: block; font-weight: 600; }
-    .ticket-info small { display: block; margin-top: 5px; font-size: 10px; color: #525b43; }
-    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--text); }
+    .ticket-info .eyebrow { font-size: 9px; color: var(--accent); margin-bottom: 6px; }
+    .ticket-info time { display: block; font: 500 11px/1.6 var(--mono); }
+    .ticket-info small { display: block; margin-top: 5px; font-size: 10px; color: var(--muted); }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 0; border-top: 1px solid var(--line-strong); }
     .section-label { display: flex; align-items: center; gap: 14px; }
-    .section-number { font: italic 18px var(--serif); color: var(--accent); letter-spacing: 0; }
-    .section-hint { font-size: 11px; color: var(--muted); }
-    .tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); margin-bottom: 24px; }
+    .section-number { font: 500 11px var(--mono); color: var(--accent); letter-spacing: 0; border: 1px solid var(--line-strong); padding: 3px 6px; }
+    .section-hint { font: 10px var(--mono); color: var(--muted); }
+    .tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line); background: var(--surface); margin-bottom: 20px; }
     .tab { position: relative; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer; padding: 13px 14px; text-align: left; transition: background .15s; min-width: 0; }
     .tab:last-child { border-right: 0; }
     .tab:hover { background: var(--surface-2); }
-    .tab.active { background: var(--accent); color: var(--surface); }
-    .t-number { font: italic 12px var(--serif); opacity: .7; display: block; margin-bottom: 6px; }
+    .tab.active { background: #1b2d37; color: var(--text); box-shadow: inset 0 2px 0 var(--lime); }
+    .tab.active .t-number { color: var(--lime); opacity: 1; }
+    .t-number { font: 10px var(--mono); opacity: .8; display: block; margin-bottom: 6px; }
     .t-name { display: block; font-weight: 600; font-size: 12px; }
-    .t-meta { display: block; font-size: 10px; margin-top: 3px; opacity: .85; }
-    .kpis { display: grid; grid-template-columns: 1.05fr 1.2fr .8fr 1fr; margin-bottom: 25px; }
+    .t-meta { display: block; font: 9px var(--mono); margin-top: 6px; color: var(--muted); }
+    .kpis { display: grid; grid-template-columns: 1.05fr 1.2fr .8fr 1fr; margin-bottom: 20px; padding: 18px 0; background: #0e1821b3; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     .kpi { min-width: 0; padding: 0 24px; border-left: 1px solid var(--line); }
-    .kpi:first-child { padding-left: 0; border-left: 0; }
+    .kpi:first-child { border-left: 0; }
     .k-label { color: var(--muted); font-size: 9px; letter-spacing: 1.1px; }
-    .k-value { font: 500 34px/1.25 var(--serif); letter-spacing: -1px; margin: 3px 0; overflow-wrap: anywhere; }
+    .k-value { font: 500 31px/1.3 var(--mono); letter-spacing: -1px; margin: 3px 0; overflow-wrap: anywhere; }
     .k-value.accent { color: var(--accent); }
     .k-sub { font-size: 11px; color: var(--muted); }
     .main-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 28px; align-items: start; }
-    .pitch-card { background: var(--turf-a); padding: 16px; color: var(--surface); }
+    .pitch-card { position: relative; background: #0c1c1b; border: 1px solid #35574b; padding: 16px; color: var(--text); }
+    .pitch-card::before, .pitch-card::after { content: ""; position: absolute; width: 10px; height: 10px; pointer-events: none; }
+    .pitch-card::before { top: -1px; left: -1px; border-top: 2px solid #94b6a6; border-left: 2px solid #94b6a6; }
+    .pitch-card::after { bottom: -1px; right: -1px; border-bottom: 2px solid #94b6a6; border-right: 2px solid #94b6a6; }
     .pitch-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 1px 4px 15px; }
-    .pitch-heading h2 { font: 500 23px var(--serif); }
+    .pitch-heading h2 { font: 600 23px var(--display); text-transform: uppercase; letter-spacing: 1.3px; }
     .pitch-heading span { font-size: 10px; color: #d1dbce; }
-    .pitch { position: relative; overflow: hidden; background: repeating-linear-gradient(to bottom, var(--turf-a) 0 78px, var(--turf-b) 78px 156px); padding: 18px 6px; border: 1px solid #708877; }
-    .pitch-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; color: #8da08c; opacity: .55; }
+    .pitch { position: relative; overflow: hidden; background: repeating-linear-gradient(to bottom, var(--turf-a) 0 78px, var(--turf-b) 78px 156px); padding: 18px 6px; border: 1px solid #527765; }
+    .pitch-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; color: #8bb89c; opacity: .55; }
     .pitch-row { display: flex; justify-content: space-evenly; align-items: flex-start; gap: 6px; margin-bottom: 22px; position: relative; z-index: 2; }
     .pitch-row:last-child { margin-bottom: 0; }
-    .player-card { display: block; flex: 0 1 105px; width: 105px; min-width: 0; padding: 10px 0 0; border-radius: 3px; position: relative; cursor: pointer; text-align: center; background: #203e34; border: 1px solid #78907d; color: var(--surface); transition: transform .15s, outline-color .15s; }
+    .player-card { display: block; flex: 0 1 105px; width: 105px; min-width: 0; padding: 10px 0 0; border-radius: 3px; position: relative; cursor: pointer; text-align: center; background: #101e25; border: 1px solid #628374; color: var(--text); transition: transform .15s, outline-color .15s; }
     .player-card:hover { transform: translateY(-3px); }
     .player-card.selected { outline: 2px solid var(--lime); outline-offset: 3px; }
     .player-card:focus-visible { outline: 3px solid white; outline-offset: 4px; }
-    .price-tag { position: absolute; top: 6px; left: 6px; font-size: 9px; color: #d5decc; font-variant-numeric: tabular-nums; }
-    .xp-tag { position: absolute; top: 5px; right: 5px; font-size: 10px; font-weight: 700; padding: 1px 4px; border-radius: 2px; background: #f4f0e7; color: #243d30; font-variant-numeric: tabular-nums; }
+    .price-tag { position: absolute; top: 6px; left: 6px; font: 9px var(--mono); color: #b4c7be; font-variant-numeric: tabular-nums; }
+    .xp-tag { position: absolute; top: 5px; right: 5px; font-size: 10px; font-weight: 700; padding: 1px 4px; border-radius: 2px; background: #b9dae6; color: #0c1b23; font-variant-numeric: tabular-nums; }
     .xp-tag.high { background: var(--lime); }
-    .cap-badge { position: absolute; top: 28px; left: 6px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--cap); color: white; font-size: 10px; font-weight: 700; border: 1px solid #e6c9ca; }
-    .cap-badge.vice { background: #dfdccb; color: #3d4a3e; border-color: #dfdccb; }
+    .cap-badge { position: absolute; top: 28px; left: 6px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--cap); color: #152019; font-size: 10px; font-weight: 700; border: 1px solid var(--cap); }
+    .cap-badge.vice { background: #b9dae6; color: #0c1b23; border-color: #b9dae6; }
     .jersey-svg { width: 50px; height: 44px; margin: 11px auto 7px; display: block; }
-    .p-name { display: block; background: var(--surface); color: #292d27; font-weight: 700; font-size: 11px; padding: 4px 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .p-fix { display: block; background: #e9e7d9; color: #465044; font-size: 9px; padding: 3px 2px; border-radius: 0 0 2px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .bench { margin-top: 15px; padding: 13px 6px 4px; border-top: 1px solid #708877; }
+    .p-name { display: block; background: #162831; color: #eef4f7; font-weight: 700; font-size: 11px; padding: 4px 3px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .p-fix { display: block; background: #0e1d25; color: #b3c8cf; font-size: 9px; padding: 3px 2px; border-radius: 0 0 2px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bench { margin-top: 15px; padding: 13px 6px 4px; border-top: 1px solid #35574b; }
     .bench-title { font-size: 9px; text-align: center; color: #d1dbce; margin-bottom: 10px; letter-spacing: 1.3px; }
     .sub-lbl { color: #d1dbce; font-size: 9px; text-align: center; margin-bottom: 5px; }
     .side { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
     .panel { min-width: 0; }
-    .panel h3 { font: 500 25px/1.2 var(--serif); letter-spacing: -.5px; margin-bottom: 16px; }
-    .panel-kicker { display: block; color: var(--muted); text-transform: uppercase; letter-spacing: 1.4px; font: 600 9px var(--sans); margin-bottom: 7px; }
-    .scout-panel { background: var(--surface); padding: 23px; border: 1px solid var(--line); border-top: 3px solid var(--accent); }
+    .panel h3 { font: 600 25px/1.2 var(--display); letter-spacing: .5px; margin-bottom: 16px; }
+    .panel-kicker { display: block; color: var(--muted); text-transform: uppercase; letter-spacing: 1.4px; font: 500 9px var(--mono); margin-bottom: 7px; }
+    .scout-panel { background: var(--surface); padding: 23px; border: 1px solid var(--line); border-top: 2px solid var(--accent); }
     .player-profile { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; }
     .profile-kit { width: 52px; flex-shrink: 0; }
     .profile-copy { min-width: 0; }
-    .profile-name { font: 600 23px/1.15 var(--serif); letter-spacing: -.5px; overflow-wrap: anywhere; }
+    .profile-name { font: 600 25px/1.15 var(--display); letter-spacing: .2px; overflow-wrap: anywhere; }
     .profile-meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
     .stat-row { display: flex; justify-content: space-between; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 11px; }
     .stat-row span { color: var(--muted); }
-    .stat-row strong { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; max-width: 60%; }
+    .stat-row strong { font-family: var(--mono); font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; max-width: 60%; }
     .note { margin-top: 15px; font-size: 11px; line-height: 1.65; color: var(--text-2); border-left: 2px solid var(--line-strong); padding-left: 12px; }
     .verdict-panel { padding: 0 4px; }
-    .verdict-panel h3 { font-style: italic; margin-bottom: 12px; }
+    .verdict-panel h3 { font-style: normal; margin-bottom: 12px; }
     .panel p, .verdict { font-size: 12px; line-height: 1.7; color: var(--text-2); }
     .verdict p + p { margin-top: 10px; }
     details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
     summary { font-size: 11px; font-weight: 600; cursor: pointer; color: var(--accent); }
     .pill { display: inline-block; padding: 2px 6px; font-size: 9px; font-weight: 600; background: var(--surface-2); color: var(--text-2); border-radius: 2px; }
-    .pill.ok { background: #e2ebdf; color: #36543a; }
-    .pill.warn { background: #f0e3c7; color: #76551f; }
-    .pill.bad, .pill.captain { background: #eddce1; color: var(--accent); }
+    .pill.ok { background: #183429; color: #9bdfb9; }
+    .pill.warn { background: #37301c; color: #e4c77f; }
+    .pill.bad { background: #3d241c; color: #f4b196; }
+    .pill.captain { background: #30371c; color: var(--lime); }
     .moves-section, .evidence-section { margin-top: 36px; }
     .plan-summary { display: flex; justify-content: space-between; gap: 20px; padding: 6px 0 18px; }
-    .plan-summary h3 { font: 500 27px var(--serif); }
+    .plan-summary h3 { font: 500 27px var(--display); }
     .plan-summary p { color: var(--muted); font-size: 11px; margin-top: 4px; }
     .plan-value { text-align: right; }
-    .plan-value strong { display: block; font: 500 28px var(--serif); color: var(--accent); }
+    .plan-value strong { display: block; font: 500 28px var(--mono); color: var(--accent); }
     .plan-value span { font-size: 10px; color: var(--muted); }
     .plan-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); border: 1px solid var(--line); background: var(--surface); }
     .plan-week { padding: 18px; border-right: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
     .plan-week:last-child { border-right: 0; }
     .plan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 14px; }
-    .plan-head strong { font: 500 22px var(--serif); color: var(--text); }
+    .plan-head strong { font: 500 17px var(--mono); color: var(--text); }
     .plan-move { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin: 5px 0; }
     .plan-move .arrow { color: var(--muted); }
     .plan-move .in { color: var(--accent); font-weight: 600; }
@@ -139,7 +150,7 @@
     .lower { display: grid; grid-template-columns: .85fr 1.15fr; gap: 36px; }
     .lower .panel + .panel { border-left: 1px solid var(--line); padding-left: 36px; }
     .evidence-intro { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 5px 0 25px; }
-    .evidence-intro h2 { font: 500 32px var(--serif); letter-spacing: -.7px; }
+    .evidence-intro h2 { font: 600 34px var(--display); letter-spacing: .7px; text-transform: uppercase; }
     .evidence-intro p { font-size: 12px; color: var(--muted); }
     .chart { width: 100%; height: auto; display: block; margin-top: 18px; }
     .chart text { font-family: var(--sans); fill: var(--muted); font-size: 10.5px; }
@@ -148,7 +159,7 @@
     .chart .axis { stroke: var(--line-strong); stroke-width: 1; }
     .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 10px; color: var(--text-2); margin-top: 10px; }
     .legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--c); }
-    .tooltip { position: fixed; pointer-events: none; z-index: 50; padding: 9px 12px; font-size: 11px; background: var(--text); color: var(--surface); display: none; max-width: calc(100vw - 24px); }
+    .tooltip { position: fixed; pointer-events: none; z-index: 50; padding: 9px 12px; font-size: 11px; background: #14242f; color: var(--text); border: 1px solid var(--line-strong); display: none; max-width: calc(100vw - 24px); }
     .tooltip b { color: var(--lime); }
     .metric-bars { margin-top: 16px; }
     .metric { padding: 13px 0; border-top: 1px solid var(--line); font-size: 11px; }
@@ -157,16 +168,17 @@
     .bar-pair { display: grid; grid-template-columns: 44px 1fr 44px; gap: 8px; align-items: center; font-size: 10px; color: var(--muted); margin: 5px 0; }
     .track { height: 6px; background: var(--surface-2); overflow: hidden; }
     .fill { height: 100%; }
-    .val { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+    .val { text-align: right; font-family: var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
     .summary-line { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; font-size: 11px; color: var(--text-2); padding: 9px 0; border-top: 1px solid var(--line); }
     .summary-line:first-child { border-top: 0; }
     .summary-line b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
     .caveat { font-size: 10px; line-height: 1.7; color: var(--muted); margin-top: 10px; }
-    .historical-heading { font: 500 21px var(--serif); margin-top: 24px; margin-bottom: 8px; }
-    .site-footer { display: flex; justify-content: space-between; gap: 40px; border-top: 1px solid var(--text); margin-top: 40px; padding: 24px 0 32px; }
-    .footer-brand { font: 600 22px var(--serif); color: var(--accent); white-space: nowrap; }
+    .historical-heading { font: 500 21px var(--display); margin-top: 24px; margin-bottom: 8px; }
+    .site-footer { display: flex; justify-content: space-between; gap: 40px; border-top: 1px solid var(--line-strong); margin-top: 40px; padding: 24px 0 32px; }
+    .footer-brand { font: 600 23px var(--display); letter-spacing: 2px; color: var(--muted); white-space: nowrap; text-transform: uppercase; }
     #footer { max-width: 720px; font-size: 10px; line-height: 1.7; color: var(--muted); }
     @media (max-width: 1050px) {
+      .orbital-mark { display: none; }
       .container { padding: 0 24px; }
       .main-grid { grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; }
       .scout-panel { padding: 18px; }
@@ -201,14 +213,14 @@
     @media (max-width: 600px) {
       .container { padding: 0 16px; }
       .topbar { padding: 20px 0 16px; gap: 15px; }
-      .wordmark { font-size: 30px; }
-      .brand-mark { width: 25px; height: 34px; }
+      .wordmark { font-size: 26px; letter-spacing: 1.6px; }
+      .brand-mark { width: 30px; height: 34px; }
       .brand { gap: 8px; }
       .brand-caption { font-size: 8px; letter-spacing: .7px; }
-      .top-nav { gap: 14px; font-size: 10px; }
+      .top-nav { gap: 12px; font-size: 9px; letter-spacing: 0; }
       .top-nav a:first-child { display: none; }
       .intro { display: block; padding: 26px 0 24px; }
-      h1 { font-size: 43px; letter-spacing: -1.7px; }
+      h1 { font-size: clamp(38px, 10.5vw, 56px); letter-spacing: .5px; }
       .intro-copy { font-size: 12px; max-width: 320px; }
       .fixture-ticket { margin-top: 22px; padding: 10px 15px; transform: none; width: 100%; gap: 16px; }
       .ticket-number { display: flex; align-items: center; gap: 8px; padding-right: 16px; }
@@ -218,8 +230,8 @@
       .ticket-info time { font-size: 11px; }
       .ticket-info small { display: none; }
       .ticket-info .eyebrow { margin-bottom: 2px; font-size: 8px; }
-      .section-label { font-size: 9px; gap: 9px; letter-spacing: 1.3px; }
-      .section-hint { font-size: 9px; }
+      .section-label { font-size: 9px; gap: 8px; letter-spacing: .7px; }
+      .section-hint { font-size: 8px; text-align: right; }
       .tabs { margin-bottom: 20px; }
       .tab { padding: 12px 9px; }
       .t-name { font-size: 11px; }
@@ -227,9 +239,9 @@
       .t-meta { font-size: 9px; }
       .kpis { grid-template-columns: 1fr 1fr; gap: 16px 0; }
       .kpi { padding: 0 14px; }
-      .kpi:nth-child(3) { border-left: 0; padding-left: 0; }
+      .kpi:nth-child(3) { border-left: 0; }
       .k-label { font-size: 8px; }
-      .k-value { font-size: 30px; }
+      .k-value { font-size: 27px; }
       .k-sub { font-size: 10px; }
       .pitch-card { padding: 11px 9px; }
       .pitch-heading { padding: 2px 3px 12px; }
@@ -266,39 +278,40 @@
   <div class="container">
     <header class="topbar">
       <a class="brand" href="#" aria-label="Touchline home">
-        <svg class="brand-mark" viewBox="0 0 32 40" fill="none" aria-hidden="true"><path d="M2 2h28v25L16 38 2 27Z" stroke="currentColor" stroke-width="1.5"/><path d="M2 16h28M16 2v36" stroke="currentColor" stroke-width="1"/><circle cx="16" cy="16" r="7" fill="var(--bg)" stroke="currentColor"/><path d="m16 11 4 3-1.5 4.5h-5L12 14Z" fill="currentColor"/></svg>
-        <div><div class="wordmark">Touchline.</div><div class="brand-caption">Fantasy football field notes</div></div>
+        <svg class="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M1 12V1h11M36 1h11v11M47 36v11H36M12 47H1V36" stroke="currentColor"/><circle cx="24" cy="24" r="14" stroke="currentColor"/><ellipse cx="24" cy="24" rx="23" ry="8" transform="rotate(-38 24 24)" stroke="currentColor"/><path d="m24 17 7 5-3 8h-8l-3-8Z" fill="currentColor"/><circle cx="41" cy="10" r="2" fill="var(--lime)"/></svg>
+        <div><div class="wordmark">Touchline</div><div class="brand-caption">Fantasy football operations</div></div>
       </a>
-      <nav class="top-nav" aria-label="Page sections"><a href="#selection">The lineup</a><a href="#moves">Your moves</a><a href="#evidence">The evidence</a></nav>
-      <span class="edition" id="edition">The gameweek edition</span>
+      <nav class="top-nav" aria-label="Page sections"><a href="#selection">Squad</a><a href="#moves">Transfers</a><a href="#evidence">Performance</a></nav>
+      <span class="edition" id="edition">Gameweek briefing</span>
     </header>
 
     <main>
       <div class="intro">
         <div>
-          <p class="eyebrow">A head start for your gameweek</p>
-          <h1>Your next <em>eleven.</em></h1>
-          <p class="intro-copy">Six ways to set up. The numbers behind every pick.<br>A little homework before the whistle.</p>
+          <p class="eyebrow">FPL / Mission control</p>
+          <h1>Matchday <span>control</span></h1>
+          <p class="intro-copy">Player forecasts. Squad configurations. Transfer planning.<br>Your next gameweek, from every angle.</p>
         </div>
+        <svg class="orbital-mark" viewBox="0 0 260 260" fill="none" aria-hidden="true"><circle cx="130" cy="130" r="68" stroke="currentColor"/><circle cx="130" cy="130" r="86" stroke="currentColor" stroke-dasharray="2 8"/><ellipse cx="130" cy="130" rx="124" ry="37" transform="rotate(-35 130 130)" stroke="currentColor"/><path d="M130 12V32M130 228V248M12 130H32M228 130H248M120 130H140M130 120V140" stroke="currentColor"/><circle cx="221" cy="64" r="4" fill="currentColor"/></svg>
         <div class="fixture-ticket" aria-label="Upcoming gameweek deadline">
           <div class="ticket-number"><span>Game<br>week</span><strong id="gw-number">–</strong></div>
-          <div class="ticket-info"><p class="eyebrow">The team sheet closes</p><time id="gw-deadline">Deadline to be confirmed</time><small id="gw-form"></small></div>
+          <div class="ticket-info"><p class="eyebrow">Next deadline</p><time id="gw-deadline">Deadline to be confirmed</time><small id="gw-form"></small></div>
         </div>
       </div>
 
       <section id="selection" aria-labelledby="selection-label">
-        <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> The selection</h2><span class="section-hint">Six approaches · £100m to work with</span></div>
+        <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> Squad configurations</h2><span class="section-hint">06 options / £100m budget</span></div>
         <div class="tabs" id="tabs" role="group" aria-label="Squad approaches"></div>
         <div id="squad-view">
           <div class="kpis" aria-live="polite" aria-atomic="true">
             <div class="kpi"><div class="k-label">Projected XI points</div><div class="k-value accent" id="kpi-xp">–</div><div class="k-sub" id="kpi-xp-sub"></div></div>
-            <div class="kpi"><div class="k-label">The armband</div><div class="k-value" id="kpi-cap">–</div><div class="k-sub" id="kpi-cap-sub"></div></div>
-            <div class="kpi"><div class="k-label">The shape</div><div class="k-value" id="kpi-form">–</div><div class="k-sub" id="kpi-form-sub"></div></div>
-            <div class="kpi"><div class="k-label">Squad spend</div><div class="k-value" id="kpi-cost">–</div><div class="k-sub" id="kpi-cost-sub"></div></div>
+            <div class="kpi"><div class="k-label">Captain</div><div class="k-value" id="kpi-cap">–</div><div class="k-sub" id="kpi-cap-sub"></div></div>
+            <div class="kpi"><div class="k-label">Formation</div><div class="k-value" id="kpi-form">–</div><div class="k-sub" id="kpi-form-sub"></div></div>
+            <div class="kpi"><div class="k-label">Squad cost</div><div class="k-value" id="kpi-cost">–</div><div class="k-sub" id="kpi-cost-sub"></div></div>
           </div>
           <div class="main-grid">
             <div class="pitch-card">
-              <div class="pitch-heading"><h2 id="squad-title">The starting XI</h2><span>Tap a shirt for the scouting notes ↗</span></div>
+              <div class="pitch-heading"><h2 id="squad-title">The starting XI</h2><span>Select a player to inspect ↗</span></div>
               <div class="pitch" role="group" aria-label="Starting eleven">
                 <svg class="pitch-lines" viewBox="0 0 600 540" preserveAspectRatio="none" fill="none" aria-hidden="true"><path d="M12 12H588V528H12ZM12 270H588M190 12V88H410V12M250 12V42H350V12M190 528V452H410V528M250 528V498H350V528" stroke="currentColor"/><circle cx="300" cy="270" r="60" stroke="currentColor"/><circle cx="300" cy="270" r="3" fill="currentColor"/><path d="M263 88Q300 130 337 88M263 452Q300 410 337 452" stroke="currentColor"/></svg>
                 <div class="pitch-row" id="row-gkp"></div><div class="pitch-row" id="row-def"></div><div class="pitch-row" id="row-mid"></div><div class="pitch-row" id="row-fwd"></div>
@@ -306,28 +319,28 @@
               <div class="bench"><div class="bench-title">The bench · in auto-sub order</div><div class="pitch-row" id="row-bench" role="group" aria-label="Substitutes"></div></div>
             </div>
             <aside class="side" aria-label="Scouting notes">
-              <div class="panel scout-panel"><h3><span class="panel-kicker">Under the microscope</span>Player notes</h3><div id="player-inspector" aria-live="polite"></div></div>
-              <div class="panel verdict-panel"><h3>From the touchline</h3><div class="verdict" id="verdict"></div></div>
+              <div class="panel scout-panel"><h3><span class="panel-kicker">Player intelligence</span>Scouting report</h3><div id="player-inspector" aria-live="polite"></div></div>
+              <div class="panel verdict-panel"><h3>Selection briefing</h3><div class="verdict" id="verdict"></div></div>
             </aside>
           </div>
         </div>
       </section>
 
       <section class="moves-section" id="moves" aria-labelledby="moves-label">
-        <div class="section-head"><h2 class="section-label" id="moves-label"><span class="section-number">02</span> Your next moves</h2><span class="section-hint">A plan for the weeks ahead</span></div>
+        <div class="section-head"><h2 class="section-label" id="moves-label"><span class="section-number">02</span> Transfer sequence</h2><span class="section-hint">Multi-gameweek planning</span></div>
         <div id="plan-box"></div>
       </section>
 
       <section class="evidence-section" id="evidence" aria-labelledby="evidence-label">
-        <div class="section-head"><h2 class="section-label" id="evidence-label"><span class="section-number">03</span> The evidence</h2><span class="section-hint">Keep the predictions honest</span></div>
-        <div class="evidence-intro"><h2>Show your working.</h2><p id="brand-sub">Historical training. Out-of-sample results.</p></div>
+        <div class="section-head"><h2 class="section-label" id="evidence-label"><span class="section-number">03</span> Performance analysis</h2><span class="section-hint">Prediction / observation</span></div>
+        <div class="evidence-intro"><h2>Mission debrief</h2><p id="brand-sub">Historical training. Out-of-sample results.</p></div>
         <div class="lower">
-          <div class="panel"><h3><span class="panel-kicker">The individual picks</span>How well do we predict?</h3><div id="model-box"></div></div>
-          <div class="panel"><h3><span class="panel-kicker">The whole team</span>How did the strategy do?</h3><div id="backtest-box"></div></div>
+          <div class="panel"><h3><span class="panel-kicker">Player-level evaluation</span>Prediction accuracy</h3><div id="model-box"></div></div>
+          <div class="panel"><h3><span class="panel-kicker">Squad-level evaluation</span>Strategy performance</h3><div id="backtest-box"></div></div>
         </div>
       </section>
     </main>
-    <footer class="site-footer"><span class="footer-brand">Touchline.</span><p id="footer"></p></footer>
+    <footer class="site-footer"><span class="footer-brand">Touchline / FPL</span><p id="footer"></p></footer>
   </div>
   <div class="tooltip" id="tooltip" role="tooltip"></div>
 
@@ -357,7 +370,7 @@
       IPS: { body: "#3A64A3", sleeve: "#FFFFFF", stripe: null }
     };
     const TAB_NAMES = ["This week", "5-GW run", "No premiums", "Fortress", "Differentials", "Strong bench"];
-    const COLORS = { model: "#385e4c", avg: "#783b50", naive: "#a57d3a" };
+    const COLORS = { model: "#7bd6ad", avg: "#8dbbff", naive: "#d5b265" };
 
     let currentVarIdx = 0;
     let selectedPlayerId = null;
