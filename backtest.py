@@ -95,6 +95,7 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
     ev_meta = dict(next((e for e in bootstrap.get("events", []) if int(e.get("id", 0)) == target_gw), {}))
     model, codes = team_model(bootstrap, fixtures, max_gw=target_gw - 1)
     teams_by_id = {int(t["id"]): t for t in bootstrap.get("teams", [])}
+    team_names = {tid: t.get("name", "") for tid, t in teams_by_id.items()}
     fixture_by_id = {int(f["id"]): f for f in fixtures if f.get("id") is not None}
     team_has_fixture = {int(f["team_h"]) for f in fixtures if int(f.get("event", 0) or 0) == target_gw} | \
                        {int(f["team_a"]) for f in fixtures if int(f.get("event", 0) or 0) == target_gw}
@@ -115,10 +116,12 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
             th, ta = int(fix["team_h"]), int(fix["team_a"])
             if th in up_by_team:
                 up_by_team[th].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(ta, {}).get('short_name', 'OPP')} (H)",
-                                       "difficulty": int(fix.get("team_h_difficulty", 3) or 3)} | fixture_context(model, codes, th, ta, True))
+                                       "difficulty": int(fix.get("team_h_difficulty", 3) or 3)}
+                                      | fixture_context(model, codes, th, ta, True, fix.get("kickoff_time") or "", team_names))
             if ta in up_by_team:
                 up_by_team[ta].append({"gw": gw_ev, "opponent": f"{teams_by_id.get(th, {}).get('short_name', 'OPP')} (A)",
-                                       "difficulty": int(fix.get("team_a_difficulty", 3) or 3)} | fixture_context(model, codes, ta, th, False))
+                                       "difficulty": int(fix.get("team_a_difficulty", 3) or 3)}
+                                      | fixture_context(model, codes, ta, th, False, fix.get("kickoff_time") or "", team_names))
 
     def team_from_row(row: Dict[str, Any]) -> Optional[int]:
         fix = fixture_by_id.get(int(row.get("fixture", -1) or -1))
@@ -183,6 +186,9 @@ def build_blinded_players_for_gw(target_gw: int) -> Tuple[List[PlayerRecord], Di
             q.team_attack_strength, q.team_defence_strength = f0["team_att"], f0["team_def"]
             q.opp_attack_strength, q.opp_defence_strength = f0["opp_att"], f0["opp_def"]
             q.lambda_for, q.lambda_against = f0["lambda_for"], f0["lambda_against"]
+            q.market_available = float(f0.get("market_available", 0.0))
+            q.market_lambda_for = float(f0.get("market_lambda_for", f0["lambda_for"]))
+            q.market_lambda_against = float(f0.get("market_lambda_against", f0["lambda_against"]))
         else:
             q.next_opponent = "BLANK"
         blinded.append(q)

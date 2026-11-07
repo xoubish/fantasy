@@ -40,6 +40,51 @@ model and the naive points-per-appearance. Six changes followed.
    The epoch cap was raised from 35 to 60 after the 2024-25 validation curve selected the
    cap itself; selection remains on validation weeks.
 
+## Bookmaker odds (added later on 2026-11-07, model mh-v4.1-market)
+
+`market_odds.py` reads football-data.co.uk Premier League files (average pre-weekend
+1X2 and over/under 2.5 prices across bookmakers; not closing prices, so no post-deadline
+line-up news) and converts each match to implied expected goals for both sides by
+matching P(home win) and P(3+ goals) under independent Poissons. Every archived fixture
+in 2022-23 to 2025-26 and every played or next-deadline fixture this season has a market
+row; later horizon weeks fall back to the Poisson team model with a flag. Files are
+committed under `data/odds/` with a manifest; the live sync refreshes the current
+season and fixtures files.
+
+The market expected goals correlate 0.91 with the Poisson team model's, so the gain is
+in the residual. Selected configurations became squared error, component sum, at 50
+epochs (2024-25) and 14 epochs (2025-26).
+
+| Held-out GW19-38 | 2024-25 v4.0 | 2024-25 v4.1 | 2025-26 v4.0 | 2025-26 v4.1 | naive 24-25 / 25-26 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| All rows MAE | 0.947 | 0.946 | 0.946 | **0.936** | 1.027 / 1.031 |
+| Played 60+: MAE | 2.249 | 2.263 | 2.368 | **2.348** | 2.216 / 2.354 |
+| Played 60+: correlation | **0.298** | 0.258 | 0.178 | **0.202** | 0.230 / 0.104 |
+| Top-15 bias | -0.25 | -0.02 | +0.85 | +0.21 | |
+| Top-11 picks, actual pts/week | 62.1 | 60.4 | 49.9 | 50.0 | 53.5 / 52.4 |
+| Top captain, actual pts/week | 8.1 | 7.6 | 4.2 | 4.6 | 8.2 / 5.3 |
+
+Strategy tests (model / naive, same planner, friction 2.5 and risk margin 0.5 selected on
+GW11-18): weekly rebuild 1310 / 1224 (2024-25) and 1175 / 1201 (2025-26); rolling
+manager 1095 / 1142 (2024-25, interval -7.95 to 5.75) and 1050 / 1138 (2025-26, interval
+-9.10 to 0.55). Current season GW3-9: rolling manager 397 versus 283 naive and 377 FPL
+average (+2.9 per week, won 5 of 7); weekly rebuild 415 versus 354; player MAE 1.783
+versus 1.842 naive; correlation 0.426 versus 0.364; projection bias -2.6 per week.
+
+Reading: the market improved the 2025-26 prediction metrics and removed most of the
+top-of-ranking overprediction, and the current-season manager now beats the human
+average over seven weeks. The 2024-25 conditional correlation fell from 0.30 to 0.26, and
+the historical rolling managers trail the naive manager in both seasons while the
+weekly-rebuild squads lead in 2024-25. Rolling totals keep moving by 50 to 100 points
+whenever planner parameters change (the twelve-point sweep spans 983 to 1027 on
+sixteen development weeks), so they are not evidence either way. Seven current-season
+weeks are not either.
+
+A gradient-boosted cross-check (`gbm_check.py`, scikit-learn, diagnostic only) on the
+same 2025-26 split gives played-60+ correlation 0.199 versus the network's 0.202, and
+their average 0.209: the network is not leaving signal in these features, and a small
+ensemble gain is available if wanted.
+
 ## Evaluation protocol
 
 Each historical test fits on earlier seasons plus GW1-10 of its evaluation season,

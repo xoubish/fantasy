@@ -22,6 +22,10 @@ def archive_signature() -> str:
     manifest = json.loads(MANIFEST_PATH.read_text())
     provenance = {"commit": manifest["commit"], "seasons": manifest["seasons"],
                   "files": {k: v["sha256"] for k, v in manifest["files"].items()}}
+    from market_odds import ODDS_MANIFEST
+    odds = json.loads(ODDS_MANIFEST.read_text()).get("files", {}) if ODDS_MANIFEST.exists() else {}
+    # Completed-season odds files are part of the training inputs; the live files are not.
+    provenance["odds"] = {k: v["sha256"] for k, v in odds.items() if k.startswith("E0_") and int(k[3:7]) < current_season_start()}
     return hashlib.sha256(json.dumps(provenance, sort_keys=True).encode() + MODEL_VERSION.encode()
                           + json.dumps(FEATURE_NAMES).encode() + str(current_season_start()).encode()).hexdigest()
 
@@ -65,7 +69,7 @@ def fit_calibration(net, samples):
     actual = np.asarray([s.points for s in samples])
     minutes = np.asarray([s.minutes for s in samples])
     classes = np.where(minutes <= 0, 0, np.where(minutes < 60, 1, 2))
-    raw = net._forward(X)
+    raw = net._outputs(X)
     logits = np.log(np.maximum(raw["pm"], 1e-12))
     temperatures = [0.75, 1.0, 1.25, 1.5, 2.0]
     def logloss(t):
@@ -134,6 +138,46 @@ def selection_metrics(net, samples):
                                         "naive": round(float(np.mean(cap_naive)), 2)}}
 
 
+ENSEMBLE_GRID = (0.0, 0.25, 0.5, 0.75)
+# Validation criterion for loss/epoch/output/ensemble choices. "rmse_points" (all rows, the
+# criterion used for every result reported so far) or "played60" (RMSE among rows where the
+# player played 60+ minutes). Changing it is a protocol decision to take before a season's
+# test is run, never after seeing test results.
+SELECTION_METRIC = "rmse_points"
+
+
+def selection_score(net, rows):
+    scores = net.evaluate(rows)
+    if SELECTION_METRIC == "played60" and scores.get("played60"):
+        return scores["played60"]["rmse_points"]
+    return scores["rmse_points"]
+
+
+def attach_booster(net, train, validation, signature, verbose=False):
+    """Fit boosted companions on train rows, choose their blend weights on validation weeks."""
+    from boosted_model import Booster
+    booster, report = Booster.select(train, validation, verbose=verbose)
+    net.booster = booster
+    net.ensemble_weights = {"points": 0.0, "minutes": 0.0}
+    scores = {}
+    for wm in ENSEMBLE_GRID:
+        net.ensemble_weights["minutes"] = wm
+        scores[wm] = net.evaluate(validation)["minutes_logloss"]
+    net.ensemble_weights["minutes"] = min(scores, key=scores.get)
+    report["minutes_weight_logloss"] = {str(k): round(v, 5) for k, v in scores.items()}
+    scores = {}
+    for wp in ENSEMBLE_GRID:
+        net.ensemble_weights["points"] = wp
+        scores[wp] = selection_score(net, validation)
+    net.ensemble_weights["points"] = min(scores, key=scores.get)
+    report["points_weight_rmse"] = {str(k): round(v, 5) for k, v in scores.items()}
+    report["weights"] = dict(net.ensemble_weights)
+    net.booster_signature = booster.save(signature).stem and signature
+    if verbose:
+        print(f"ensemble weights {net.ensemble_weights}", flush=True)
+    return report
+
+
 def fit_for_season(samples, season, max_epochs=60, verbose=False):
     """Select loss, epoch count and points output (direct head, component sum or their average)
     on validation RMSE, calibrate on separate weeks, then evaluate once on the test weeks."""
@@ -146,7 +190,7 @@ def fit_for_season(samples, season, max_epochs=60, verbose=False):
         def checkpoint(epoch, model):
             for output in POINTS_OUTPUTS:
                 model.points_output = output
-                score = model.evaluate(validation)["rmse_points"]
+                score = selection_score(model, validation)
                 if score < best[output]["rmse"]:
                     best[output].update(rmse=score, epoch=epoch, params=model.clone_params())
             model.points_output = "direct"
@@ -160,6 +204,7 @@ def fit_for_season(samples, season, max_epochs=60, verbose=False):
             if verbose:
                 print(f"{season}: {loss}/{output}, validation RMSE {best[output]['rmse']:.4f}, epoch {best[output]['epoch']}", flush=True)
     _, net, epochs = min(candidates, key=lambda item: item[0])
+    ensemble = attach_booster(net, train, validation, f"eval-{season}", verbose=verbose)
     uncalibrated = net.evaluate(test)
     fit_calibration(net, calibration)
     report = {"evaluation_season": season, "train_samples": len(train), "validation_samples": len(validation),
@@ -167,6 +212,7 @@ def fit_for_season(samples, season, max_epochs=60, verbose=False):
               "split": {"train": f"earlier seasons + {season} GW1-10", "validation": f"{season} GW11-14",
                         "calibration": f"{season} GW15-18", "test": f"{season} GW19-38"},
               "chosen_loss": net.points_loss, "chosen_output": net.points_output, "chosen_epochs": epochs,
+              "selection_metric": SELECTION_METRIC, "ensemble": ensemble,
               "candidates": [{"loss": n.points_loss, "output": n.points_output, "validation_rmse": round(score, 4), "epochs": ep}
                              for score, n, ep in candidates],
               "uncalibrated_test": uncalibrated, "test": net.evaluate(test),
@@ -184,9 +230,16 @@ def train_historical_model(verbose=False):
     final = FPLNeuralNetwork(points_loss=report["chosen_loss"], points_output=report["chosen_output"])
     final.train(samples, epochs=report["chosen_epochs"])
     final.calibration = json.loads(json.dumps(probe.calibration))
+    chosen = report["ensemble"]["chosen"]
+    from boosted_model import Booster
+    final.booster = Booster(points_iterations=chosen["points_iterations"], minutes_iterations=chosen["minutes_iterations"],
+                            points_loss=chosen["points_loss"]).fit(samples)
+    final.ensemble_weights = dict(probe.ensemble_weights)
+    final.booster.save(archive_signature())
+    final.booster_signature = archive_signature()
     final.metrics = {
         "version": MODEL_VERSION, "architecture": f"{len(FEATURE_NAMES)} -> 48 -> 24 -> [minutes | points | haul | components]",
-        "points_output": report["chosen_output"],
+        "points_output": report["chosen_output"], "ensemble_weights": dict(final.ensemble_weights),
         "historical_only": True, "coach_adjustments": False, "training_signature": archive_signature(),
         "training_seasons": seasons, "samples_by_season": dict(Counter(s.season for s in samples)),
         "real_gw_samples": len(samples), "latest_trained_gw": 38,

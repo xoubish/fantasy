@@ -11,3 +11,4 @@ data/player_summaries.json
 data/historical/
 data/historical_features.npz
 data/snapshots/
+data/boosters/

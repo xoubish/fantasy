@@ -44,7 +44,7 @@ except ImportError as exc:  # pragma: no cover
 from fpl_data import CACHE_FIXTURES, DATA_DIR, PlayerRecord
 
 NN_WEIGHTS_PATH = DATA_DIR / "nn_weights.json"
-MODEL_VERSION = "mh-v4.0-components"
+MODEL_VERSION = "mh-v4.1-market"
 
 # Average FPL points of a 1-59 minute appearance (re-estimated from data at train time)
 DEFAULT_CAMEO_POINTS = 1.15
@@ -105,6 +105,11 @@ FEATURE_NAMES: List[str] = [
     "log_lambda_for",
     "log_lambda_against",
     "team_cs_prob",
+    # --- bookmaker market (pre-deadline average prices; falls back to the team model) ---
+    "log_market_lambda_for",
+    "log_market_lambda_against",
+    "market_cs_prob",
+    "market_available",
     # --- static / market ---
     "price",
     "past_season_pts90",
@@ -295,14 +300,18 @@ def features_from_history(
 ) -> List[float]:
     """Builds the feature vector for ONE fixture from match rows strictly before it.
 
-    `fixture` carries `is_home` and the Poisson team model's `lambda_for` / `lambda_against`.
-    `prior` is the previous-season rate dict from `prior_rates_from_totals`.
+    `fixture` carries `is_home`, the Poisson team model's `lambda_for` / `lambda_against` and,
+    when bookmaker prices exist, `market_lambda_for` / `market_lambda_against` with
+    `market_available` = 1. `prior` is the previous-season rate dict from `prior_rates_from_totals`.
     """
     prior = prior or prior_rates_from_totals(None)
     rec = compute_recency_weighted_metrics(prior_rows, decay=EWMA_DECAY, prior=prior, position=position)
     is_home = bool(fixture.get("is_home", True))
     lam_for = max(0.05, float(fixture.get("lambda_for", DEFAULT_LAMBDA) or DEFAULT_LAMBDA))
     lam_against = max(0.05, float(fixture.get("lambda_against", DEFAULT_LAMBDA) or DEFAULT_LAMBDA))
+    market = bool(fixture.get("market_available"))
+    m_for = max(0.05, float(fixture.get("market_lambda_for", lam_for) or lam_for)) if market else lam_for
+    m_against = max(0.05, float(fixture.get("market_lambda_against", lam_against) or lam_against)) if market else lam_against
 
     return [
         1.0 if position == "GKP" else 0.0,
@@ -335,6 +344,10 @@ def features_from_history(
         math.log(lam_for),
         math.log(lam_against),
         math.exp(-lam_against),
+        math.log(m_for),
+        math.log(m_against),
+        math.exp(-m_against),
+        1.0 if market else 0.0,
         price / 15.0,
         float(prior.get("pts", 0.0)) / 8.0 if prior.get("valid") else 0.0,
         float(prior.get("mins_share", 0.0)),
@@ -388,6 +401,9 @@ def extract_features(
         "is_home": player.is_home,
         "lambda_for": player.lambda_for,
         "lambda_against": player.lambda_against,
+        "market_available": player.market_available,
+        "market_lambda_for": player.market_lambda_for,
+        "market_lambda_against": player.market_lambda_against,
     }
     return features_from_history(
         player.position,
@@ -501,6 +517,9 @@ class FPLNeuralNetwork:
         self.sigma = np.ones(in_dim)
         self.cameo_points = DEFAULT_CAMEO_POINTS
         self.component_constants = [0.0, 0.0, 0.0, 0.0]  # red/own-goal/penalty points by position, given 60+
+        self.booster: Any = None  # optional boosted_model.Booster blended into the outputs
+        self.ensemble_weights = {"points": 0.0, "minutes": 0.0}  # chosen on validation weeks
+        self.booster_signature = ""
         self.metrics: Dict[str, Any] = {}
         self.baselines = {"points": 0.0, "minutes": [1/3, 1/3, 1/3], "haul": 0.1}
 
@@ -547,12 +566,25 @@ class FPLNeuralNetwork:
                 "xp_direct": xp_direct, "xp_component": xp_component, "heads": heads, "head_raw": raw,
                 "pos": pos}
 
+    def _outputs(self, X: np.ndarray) -> Dict[str, np.ndarray]:
+        """Network forward pass plus the validation-chosen blend with the boosted companion models.
+        Training never uses this path, so gradients always come from the network alone."""
+        f = self._forward(X)
+        wp, wm = float(self.ensemble_weights.get("points", 0.0)), float(self.ensemble_weights.get("minutes", 0.0))
+        if self.booster is not None and (wp > 0 or wm > 0):
+            b = self.booster.predict(X)
+            if wp > 0:
+                f["xp"] = (1 - wp) * f["xp"] + wp * b["xp_full"]
+            if wm > 0:
+                f["pm"] = (1 - wm) * f["pm"] + wm * b["pm"]
+        return f
+
     def predict_batch(self, X: Sequence[Sequence[float]]) -> Dict[str, np.ndarray]:
         """Vectorised prediction. Returns p_none, p_cameo, p_full, xp_full, haul, expected_points, components."""
         Xa = np.asarray(X, dtype=float)
         if Xa.ndim == 1:
             Xa = Xa[None, :]
-        f = self._forward(Xa)
+        f = self._outputs(Xa)
         pos = f["pos"]
         calibration = np.asarray(self.calibration["points"])[pos]
         xp_full = np.clip(calibration[:, 0] + calibration[:, 1] * f["xp"], XP_FULL_CLIP[0], XP_FULL_CLIP[1])
@@ -789,6 +821,7 @@ class FPLNeuralNetwork:
             out["played60"] = {
                 "n": int(full.sum()),
                 "mae_points": float(np.abs(xp_full[full] - a).mean()),
+                "rmse_points": float(np.sqrt(((xp_full[full] - a) ** 2).mean())),
                 "mae_naive_baseline": float(np.abs(naive_full[full] - a).mean()),
                 "bias_points": float((xp_full[full] - a).mean()),
                 "corr_points": corr(xp_full[full], a),
@@ -841,6 +874,8 @@ class FPLNeuralNetwork:
             "baselines": self.baselines,
             "points_loss": self.points_loss,
             "points_output": self.points_output,
+            "ensemble_weights": self.ensemble_weights,
+            "booster_signature": self.booster_signature,
             "calibration": self.calibration,
             "params": {k: v.tolist() for k, v in self.params.items()},
             "metrics": self.metrics,
@@ -863,6 +898,13 @@ class FPLNeuralNetwork:
         net.baselines = data["baselines"]
         net.calibration = data["calibration"]
         net.metrics = data.get("metrics", {})
+        net.ensemble_weights = dict(data.get("ensemble_weights", {"points": 0.0, "minutes": 0.0}))
+        net.booster_signature = str(data.get("booster_signature", ""))
+        if net.booster_signature and (net.ensemble_weights.get("points") or net.ensemble_weights.get("minutes")):
+            from boosted_model import Booster
+            net.booster = Booster.load(net.booster_signature)
+            if net.booster is None:
+                raise ValueError("Boosted companion models are missing; retrain required.")
         return net
 
 

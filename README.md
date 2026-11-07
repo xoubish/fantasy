@@ -36,6 +36,12 @@ shrunk toward a weaker prior. The 240-day half-life was chosen by one-step-ahead
 log-likelihood on 2022–23 to 2024–25 only (`python3 team_ratings.py select`). Ratings no
 longer restart from a flat value each August.
 
+**Bookmaker odds** (`market_odds.py`) from football-data.co.uk add market-implied
+expected goals for and against for each fixture, derived from pre-weekend average 1X2
+and over/under 2.5 prices (never closing prices). Files are committed under
+`data/odds/` with a manifest and refreshed by the live sync; fixtures without prices
+fall back to the team model with a flag.
+
 **Per-90 rates** are recency-weighted and shrunk toward the player's previous-season
 rates (three pseudo-matches), or toward position averages from the development seasons
 when the player had under 450 previous-season minutes (`historical_data.py
@@ -50,8 +56,14 @@ component expected points apply the official scoring rules to those heads, inclu
 the 2025–26 defensive-contribution points; the formula reproduces archived points
 exactly on every 60+ minute row. `historical_training.py` compares Huber and
 squared-error losses and three points outputs (direct head, component sum, their
-average) using validation **RMSE**, then fits regularized point calibration and minutes
-temperature on a separate period. The optimizer receives the resulting expected points.
+average) using validation **RMSE**. Two scikit-learn gradient-boosted companions
+(`boosted_model.py`: points given 60+ minutes, and the minutes class) are then fitted on
+the training rows, their iteration counts and blend weights with the network chosen on
+the same validation weeks (a weight of zero is allowed), and the blended outputs are
+calibrated on a separate period. Fitted boosters are pickled under `data/boosters/`
+(ignored by Git) and rebuilt when missing. The validation criterion is a module constant
+(`SELECTION_METRIC`); switching it to the 60+ slice is a decision to take before a
+season's test, not after. The optimizer receives the resulting expected points.
 Coach notes are informational; heuristic or LLM adjustments do not alter calibrated scores.
 
 For each historical evaluation season:
@@ -108,20 +120,33 @@ unchanged predictions. This is a bounded shortlist, not every possible team.
 The page draws from qualifying teams without repetition until the matching pool
 has been seen. Projections include the captain, but no bench or automatic-sub bonuses.
 
-Requires Python 3.10+, `numpy`, `scipy` and `pillow`.
+Requires Python 3.10+, `numpy`, `scipy`, `pillow` and `scikit-learn`.
 
 ```bash
-python3 -m pip install numpy scipy pillow
+python3 -m pip install numpy scipy pillow scikit-learn
 python3 fpl_assistant.py sync          # live roster/form histories, historical archive, news
 python3 historical_data.py sync       # restore just the pinned historical archive
 python3 fpl_assistant.py train-nn      # historical loss/output comparison, calibration, test, deployment fit
 python3 historical_backtest.py --tune # planner sweep on GW11-18, then 40 historical strategy-test weeks
 python3 backtest.py --no-coach         # fixed-model current-season test against FPL averages
 python3 team_ratings.py select        # half-life check on development seasons; `table` prints current ratings
+python3 market_odds.py sync           # refresh bookmaker odds files; `check` reports fixture coverage
+python3 gbm_check.py                  # diagnostic gradient-boosting comparison on one split
+python3 minutes_ledger.py             # score recorded pre-deadline minutes probabilities against actual minutes
 python3 fpl_assistant.py analyze       # squad report and transfer plan
 python3 web_app.py                    # rebuild index.html
 python3 -m unittest -v test_regressions
 ```
+
+**Availability news.** Official FPL flags override the minutes head. The official text's
+return date ("Expected back 22 Nov", "Suspended until 29 Nov") is parsed: a flagged
+player expected back before the next kickoff is treated as a first game back (start
+probability halved) rather than ruled out, and later horizon weeks are out before the
+date and model-based from it. Scraped headlines remain display-only. Every page build
+before a deadline writes the minutes head's own probabilities and the final availability
+to `data/minutes_ledger.json`; `python3 minutes_ledger.py` scores both columns against
+actual minutes once weeks complete, so a news rule has to beat the bare model there to
+keep its place.
 
 Live `sync` refreshes full histories, including zero-minute players, to pick up doubles
 and bonus corrections. `--shallow` skips current histories; `--deep` remains accepted.
@@ -135,11 +160,11 @@ future deadline-aware evaluation; it is ignored by Git and is not a training sou
 ## Interpretation and remaining limitations
 
 See `data/model_review_results.md` for measured results. The cross-season ratings,
-previous-season priors and component heads raised the held-out correlation among
-players who actually play from roughly the naive level to 0.30 (2024-25) and 0.18
-(2025-26), but the 20-week strategy tests remain within noise of the naive manager and
-the realistic manager still trails the current-season human average. Test performance
-must not be used to retune parameters.
+previous-season priors, component heads and bookmaker odds raised the held-out
+correlation among players who actually play from roughly the naive level to 0.26
+(2024-25) and 0.20 (2025-26). The 20-week strategy tests remain within noise of the naive
+manager, and the current-season manager's lead over the human average rests on seven
+weeks. Test performance must not be used to retune parameters.
 
 - Scoring-era features cannot fully reconstruct past assist/BPS rules or learn the
   2026–27 rule changes before observing a completed season under them.

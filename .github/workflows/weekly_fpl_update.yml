@@ -24,7 +24,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies (numpy for the model, scipy for the MILP solver, Pillow for pitch figures)
-        run: pip install numpy scipy pillow
+        run: pip install numpy scipy pillow scikit-learn
 
       - name: Check data integrity, transfer rules and evaluation splits
         run: python3 -m unittest -v test_regressions
@@ -42,7 +42,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html data/nn_weights.json data/latest_report.md data/my_squad_pitch.png data/backtest_results.json
+          git add index.html data/nn_weights.json data/latest_report.md data/my_squad_pitch.png data/backtest_results.json data/odds
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else

@@ -99,13 +99,26 @@ class PlayerPrediction:
     gw_xps: Dict[int, float] = field(default_factory=dict)  # gameweek -> xP (next HORIZON_GWS)
     p_full: float = 0.0  # P(60+ minutes) this gameweek
     p_cameo: float = 0.0  # P(1-59 minutes) this gameweek
+    model_p_full: float = 0.0  # minutes head alone, before official flags and notes
+    model_p_cameo: float = 0.0
     xp_uncertainty: float = 0.0
 
 
-def _availability_for_future_gw(news: PlayerNewsAssessment, model_full: float, model_cameo: float, k: int) -> Tuple[float, float]:
-    """Availability k gameweeks ahead: official flags fade, the learned minutes model remains."""
+def _availability_for_future_gw(news: PlayerNewsAssessment, model_full: float, model_cameo: float, k: int,
+                                kickoff: Optional[str] = None) -> Tuple[float, float]:
+    """Availability k gameweeks ahead: official flags fade, the learned minutes model remains.
+    An official return date is applied exactly: out before it, model-based (halved on the
+    first eligible week) from it."""
     if k == 0:
         return news.start_probability, news.cameo_probability
+    if news.return_date and kickoff:
+        from news_scraper import kickoff_datetime
+        kick = kickoff_datetime(kickoff)
+        if kick is not None:
+            if kick.date().isoformat() < news.return_date:
+                return 0.0, 0.02
+            first_back = news.risk_level == "INJURED_OR_OUT"
+            return (model_full * (0.5 if first_back else 1.0), min(1.0, model_cameo + (model_full * 0.25 if first_back else 0.0)))
     if news.risk_level == "INJURED_OR_OUT":
         fade = 0.0 if k == 1 else (0.5 if k == 2 else 0.8)
         return model_full * fade, model_cameo * fade
@@ -168,7 +181,7 @@ def predict_player(player: PlayerRecord, articles: List[NewsArticle]) -> PlayerP
             out = base if (k == 0 and len(fixtures_by_gw.get(gw, [])) == 1) else nn_model.predict_full(
                 extract_features(player, fixture_override=fx)
             )
-            p_full, p_cameo = _availability_for_future_gw(news, out["p_full"], out["p_cameo"], k)
+            p_full, p_cameo = _availability_for_future_gw(news, out["p_full"], out["p_cameo"], k, fx.get("kickoff"))
             total += p_full * max(0.5, out["xp_full"] + tactical_delta * (1.0 if k == 0 else 0.6)) + p_cameo * cameo_pts
         gw_xps[gw] = round(total, 3)
 
@@ -210,6 +223,8 @@ def predict_player(player: PlayerRecord, articles: List[NewsArticle]) -> PlayerP
         gw_xps=gw_xps,
         p_full=round(news.start_probability, 3),
         p_cameo=round(news.cameo_probability, 3),
+        model_p_full=round(base["p_full"], 3),
+        model_p_cameo=round(base["p_cameo"], 3),
         xp_uncertainty=round(base["residual_std"] / math.sqrt(max(3, sum(
             0.9 ** max(0, target_gw - 1 - int(r.get("round", 0)))
             for r in player.gw_history if int(r.get("round", 0)) < target_gw and float(r.get("minutes", 0)) > 0

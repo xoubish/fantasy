@@ -22,6 +22,7 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -118,6 +119,37 @@ class PlayerNewsAssessment:
     matched_headlines: List[str] = field(default_factory=list)
     matched_quotes: List[str] = field(default_factory=list)
     reasoning: str = "No negative team news."
+    return_date: Optional[str] = None  # ISO date parsed from the official "Expected back"/"until" text
+
+
+_RETURN_DATE = re.compile(r"(?:expected back|back on|until|return(?:s|ing)?(?: on)?)\s+(\d{1,2})\s+([A-Za-z]{3})[a-z]*", re.I)
+_MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+
+
+def parse_return_date(news: str, reference: Optional[datetime] = None) -> Optional[datetime]:
+    """Date in the official FPL news text ("Hamstring injury - Expected back 22 Nov", "Suspended until 29 Nov").
+    The year is the one that puts the date within four months before, or any time after, `reference`."""
+    if not news:
+        return None
+    match = _RETURN_DATE.search(news)
+    if not match or match.group(2).lower() not in _MONTHS:
+        return None
+    reference = reference or datetime.now(timezone.utc)
+    day, month = int(match.group(1)), _MONTHS[match.group(2).lower()]
+    try:
+        candidate = datetime(reference.year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if candidate < reference - timedelta(days=120):
+        candidate = candidate.replace(year=reference.year + 1)
+    return candidate
+
+
+def kickoff_datetime(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")) if value else None
+    except ValueError:
+        return None
 
 
 class _HeadlineHTMLParser(HTMLParser):
@@ -289,8 +321,14 @@ def analyze_player_news(
         if len(p_web) >= 5 and p_web in _normalize(art.headline):
             matched_headlines.append(f"[{art.source}] {art.headline}")
 
-    # 1. Hard official flags
-    if player.status in ("i", "s", "u") or player.chance_of_playing_next_round == 0:
+    # 1. Hard official flags, read together with the official return date when one is given
+    return_dt = parse_return_date(player.fpl_news)
+    return_iso = return_dt.date().isoformat() if return_dt else None
+    next_fixture = next((f for f in player.upcoming_3gw_fixtures if int(f.get("gw", 0) or 0) == int(player.target_gw or 0)), None)
+    next_kickoff = kickoff_datetime(next_fixture.get("kickoff")) if next_fixture else None
+    back_before_kickoff = bool(return_dt and next_kickoff and return_dt.date() <= next_kickoff.date())
+    flagged_out = player.status in ("i", "s", "u") or player.chance_of_playing_next_round == 0
+    if flagged_out and not (back_before_kickoff and player.status != "u"):
         return PlayerNewsAssessment(
             player_name=player.web_name,
             risk_level="INJURED_OR_OUT",
@@ -298,7 +336,9 @@ def analyze_player_news(
             cameo_probability=0.0,
             matched_headlines=matched_headlines,
             matched_quotes=matched_quotes,
-            reasoning="Ruled out by the official FPL injury/suspension flag.",
+            reasoning="Ruled out by the official FPL injury/suspension flag."
+                      + (f" Expected back {return_iso}." if return_iso else ""),
+            return_date=return_iso,
         )
 
     # 2. Learned minutes model
@@ -319,7 +359,12 @@ def analyze_player_news(
 
     # 3. Official doubt flags scale the model
     chance = player.chance_of_playing_next_round
-    if chance is not None and chance < 100:
+    if flagged_out and back_before_kickoff:
+        # Still flagged, but the official text expects a return before this kickoff: first game back.
+        p_cameo = min(1.0 - p_full * 0.5, p_cameo + p_full * 0.25)
+        p_full *= 0.5
+        reason = f"Official text expects a return on {return_iso}, before kickoff; treated as a first game back; " + reason
+    elif chance is not None and chance < 100:
         c = chance / 100.0
         p_cameo = min(1.0 - p_full * c, p_cameo * c + p_full * (1.0 - c) * 0.35)
         p_full = p_full * c
@@ -361,4 +406,5 @@ def analyze_player_news(
         matched_headlines=matched_headlines,
         matched_quotes=matched_quotes,
         reasoning=reason,
+        return_date=return_iso,
     )

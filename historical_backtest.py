@@ -51,7 +51,7 @@ def week_players(archive, net, gw, horizon=3):
                 if fixture["event"] != target or snapshot["team_id"] not in (fixture["team_h"], fixture["team_a"]):
                     continue
                 home = snapshot["team_id"] == fixture["team_h"]
-                context = dict(snapshot, round=gw, was_home=home,
+                context = dict(snapshot, round=gw, was_home=home, kickoff_time=fixture["kickoff_time"],
                                opponent_team=fixture["team_a"] if home else fixture["team_h"])
                 features = features_from_history(snapshot["position"], prior, fixture_features(archive, context),
                                                  snapshot["value"] / 10, prior_rates,

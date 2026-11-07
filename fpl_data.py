@@ -125,6 +125,9 @@ class PlayerRecord:
     target_gw: int = 0
     lambda_for: float = 1.35  # Poisson expected goals for the player's team in the next fixture
     lambda_against: float = 1.35  # Poisson expected goals against
+    market_available: float = 0.0  # 1 when bookmaker prices exist for the next fixture
+    market_lambda_for: float = 1.35
+    market_lambda_against: float = 1.35
 
     @property
     def historical_ppg_3yr(self) -> float:
@@ -271,6 +274,14 @@ def sync_live_fpl_data(
 
     if status["live_fpl_synced"]:
         status["snapshot"] = str(archive_live_snapshot())
+    try:
+        from historical_data import current_season_start
+        from market_odds import sync_odds
+        current = current_season_start()
+        odds = sync_odds(range(current - 5, current + 1), current_year=current)
+        status["odds_errors"] = odds.get("errors", [])
+    except Exception as exc:  # odds are optional inputs; the model falls back to team ratings
+        status["errors"].append(f"Odds sync warning: {exc}")
     return status
 
 
@@ -327,9 +338,19 @@ def team_model(
     return ratings_at(cutoff, matches), codes
 
 
-def fixture_context(model, codes: Dict[int, int], team_id: int, opponent_id: int, is_home: bool) -> Dict[str, Any]:
-    """Feature inputs for `team_id` against `opponent_id` (see `PoissonRatings.fixture_context`)."""
-    return model.fixture_context(codes.get(int(team_id)), codes.get(int(opponent_id)), is_home)
+def fixture_context(model, codes: Dict[int, int], team_id: int, opponent_id: int, is_home: bool,
+                    kickoff: str = "", names: Optional[Dict[int, str]] = None) -> Dict[str, Any]:
+    """Feature inputs for `team_id` against `opponent_id`: Poisson team model plus bookmaker market
+    context when `kickoff` and club `names` are supplied and prices exist."""
+    from market_odds import market_context
+    out = model.fixture_context(codes.get(int(team_id)), codes.get(int(opponent_id)), is_home)
+    out["kickoff"] = kickoff
+    if kickoff and names:
+        home_id, away_id = (team_id, opponent_id) if is_home else (opponent_id, team_id)
+        out |= market_context(kickoff, names.get(int(home_id), ""), names.get(int(away_id), ""), is_home)
+    else:
+        out["market_available"] = 0.0
+    return out
 
 
 def compute_team_strengths(
@@ -389,6 +410,7 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
         if not t.get("unavailable", False)
     }
     model, codes = team_model(bootstrap, fixtures)
+    team_names = {tid: t.get("name", "") for tid, t in teams_by_id.items()}
 
     if target_gw is None:
         target_gw = next_editable_gameweek(bootstrap)
@@ -408,13 +430,13 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                     upcoming_3gw_by_team[th].append(
                         {"gw": gw_ev, "opponent": f"{ta_obj.get('short_name', 'OPP')} (H)",
                          "difficulty": int(fix.get("team_h_difficulty", 3) or 3)}
-                        | fixture_context(model, codes, th, ta, True)
+                        | fixture_context(model, codes, th, ta, True, fix.get("kickoff_time") or "", team_names)
                     )
                 if ta in upcoming_3gw_by_team:
                     upcoming_3gw_by_team[ta].append(
                         {"gw": gw_ev, "opponent": f"{th_obj.get('short_name', 'OPP')} (A)",
                          "difficulty": int(fix.get("team_a_difficulty", 3) or 3)}
-                        | fixture_context(model, codes, ta, th, False)
+                        | fixture_context(model, codes, ta, th, False, fix.get("kickoff_time") or "", team_names)
                     )
 
     next_fix_by_team: Dict[int, Dict[str, Any]] = {
@@ -550,6 +572,9 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                 target_gw=int(target_gw),
                 lambda_for=float(fix_info.get("lambda_for", 1.35)),
                 lambda_against=float(fix_info.get("lambda_against", 1.35)),
+                market_available=float(fix_info.get("market_available", 0.0)),
+                market_lambda_for=float(fix_info.get("market_lambda_for", fix_info.get("lambda_for", 1.35))),
+                market_lambda_against=float(fix_info.get("market_lambda_against", fix_info.get("lambda_against", 1.35))),
             )
         )
     return records

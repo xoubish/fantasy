@@ -468,6 +468,86 @@ class BacktestBlindingTests(unittest.TestCase):
                 self.assertIsNotNone(backtest.snapshot_before("2026-09-08T10:00:00Z"))
 
 
+class MarketOddsTests(unittest.TestCase):
+    def test_implied_lambdas_reproduce_market_probabilities(self):
+        import market_odds
+        lh, la = market_odds.implied_lambdas(0.55, 0.60)
+        self.assertAlmostEqual(market_odds._p_home_win(lh, la), 0.55, places=4)
+        self.assertAlmostEqual(market_odds._p_over(lh + la), 0.60, places=4)
+        self.assertGreater(lh, la)
+
+    def test_market_context_maps_names_and_flags_missing_prices(self):
+        import market_odds
+        table = {("2026-11-07", "Spurs", "Hull City"): {"lambda_home": 1.9, "lambda_away": 0.8, "p_home": 0.6, "p_draw": 0.2, "p_away": 0.2}}
+        with patch.object(market_odds, "_load_market", return_value=table), patch.object(market_odds, "_signature", return_value=()):
+            away = market_odds.market_context("2026-11-07T15:00:00Z", "Tottenham", "Hull", False)
+            self.assertEqual(away["market_available"], 1.0)
+            self.assertEqual((away["market_lambda_for"], away["market_lambda_against"]), (0.8, 1.9))
+            self.assertEqual(market_odds.market_context("2026-11-07T15:00:00Z", "Arsenal", "Hull", True), {"market_available": 0.0})
+        feats = neural_model.features_from_history("FWD", [], {"lambda_for": 1.5, "lambda_against": 1.0}, 7.0)
+        i = neural_model.FEATURE_NAMES.index
+        self.assertEqual(feats[i("market_available")], 0.0)
+        self.assertAlmostEqual(feats[i("log_market_lambda_for")], feats[i("log_lambda_for")])
+        feats = neural_model.features_from_history("FWD", [], {"lambda_for": 1.5, "lambda_against": 1.0, "market_available": 1.0,
+                                                               "market_lambda_for": 2.0, "market_lambda_against": 0.5}, 7.0)
+        self.assertEqual(feats[i("market_available")], 1.0)
+        self.assertAlmostEqual(feats[i("log_market_lambda_for")], math.log(2.0))
+
+
+class AvailabilityNewsTests(unittest.TestCase):
+    def _player(self, **overrides):
+        import fpl_data
+        base = dict(id=1, web_name="Ekitike", full_name="x", team_id=1, team_short="LIV", team_name="Liverpool", position="FWD", price=8.0,
+                    status="i", chance_of_playing_next_round=0, fpl_news="Hamstring injury - Expected back 8 Nov", total_points=0, minutes=900,
+                    starts=10, points_per_game=0, form=0, value_form=0, value_season=0, selected_by_percent=0, xg_per_90=0, xa_per_90=0,
+                    xgi_per_90=0, xgc_per_90=0, defensive_contribution_per_90=0, ict_per_90=0, threat_per_90=0, creativity_per_90=0,
+                    saves_per_90=0, clean_sheets=0, bps_per_90=0, bonus=0, in_dreamteam=False, penalties_order=None, corners_order=None,
+                    direct_freekicks_order=None, next_opponent="", is_home=True, fixture_difficulty=3, team_attack_strength=1150,
+                    team_defence_strength=1150, opp_attack_strength=1150, opp_defence_strength=1150, target_gw=11,
+                    upcoming_3gw_fixtures=[{"gw": 11, "kickoff": "2026-11-21T15:00:00Z"}, {"gw": 12, "kickoff": "2026-11-28T15:00:00Z"}])
+        return fpl_data.PlayerRecord(**(base | overrides))
+
+    def test_return_date_parsing(self):
+        from news_scraper import parse_return_date
+        ref = datetime(2026, 11, 7, tzinfo=timezone.utc)
+        self.assertEqual(parse_return_date("Hamstring injury - Expected back 22 Nov", ref).date().isoformat(), "2026-11-22")
+        self.assertEqual(parse_return_date("Suspended until 2 Jan", ref).date().isoformat(), "2027-01-02")
+        self.assertIsNone(parse_return_date("Knee injury - Unknown return date", ref))
+
+    def test_flagged_player_expected_back_before_kickoff_is_not_zeroed(self):
+        from news_scraper import analyze_player_news
+        with patch.object(news_scraper_module(), "datetime", wraps=datetime) as fake:
+            fake.now.return_value = datetime(2026, 11, 7, tzinfo=timezone.utc)
+            back = analyze_player_news(self._player(), [], minutes_probs=(0.8, 0.1))
+            still_out = analyze_player_news(self._player(fpl_news="Hamstring injury - Expected back 2 Jan"), [], minutes_probs=(0.8, 0.1))
+        self.assertAlmostEqual(back.start_probability, 0.4)
+        self.assertEqual(back.return_date, "2026-11-08")
+        self.assertEqual(still_out.start_probability, 0.0)
+        self.assertEqual(still_out.risk_level, "INJURED_OR_OUT")
+        self.assertEqual(predictor._availability_for_future_gw(still_out, 0.8, 0.1, 1, "2026-11-28T15:00:00Z"), (0.0, 0.02))
+        self.assertEqual(predictor._availability_for_future_gw(still_out, 0.8, 0.1, 2, "2027-01-03T15:00:00Z")[0], 0.4)
+
+    def test_ledger_records_before_deadline_and_scores(self):
+        import minutes_ledger
+        bootstrap = {"events": [{"id": 11, "deadline_time": "2026-11-21T11:00:00Z"}]}
+        pred = SimpleNamespace(player=self._player(status="a", chance_of_playing_next_round=None, fpl_news=""),
+                               model_p_full=0.7, model_p_cameo=0.1, p_full=0.9, p_cameo=0.05, news=SimpleNamespace(risk_level="NONE", return_date=None))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.json"
+            late = minutes_ledger.record([pred], 11, now=datetime(2026, 11, 21, 12, tzinfo=timezone.utc), bootstrap=bootstrap, path=path)
+            self.assertEqual(late["recorded"], 0)
+            early = minutes_ledger.record([pred], 11, now=datetime(2026, 11, 20, tzinfo=timezone.utc), bootstrap=bootstrap, path=path)
+            self.assertEqual(early["recorded"], 1)
+            result = minutes_ledger.score({11: {1: 90}}, path=path)
+        self.assertEqual(result["pooled"]["n"], 1)
+        self.assertLess(result["pooled"]["final_ll60"], result["pooled"]["model_ll60"])
+
+
+def news_scraper_module():
+    import news_scraper
+    return news_scraper
+
+
 class PlannerParameterTests(unittest.TestCase):
     def test_defaults_when_no_selection_file(self):
         with patch.object(optimizer, "PLANNER_PARAMS_PATH", Path("/nonexistent/planner_params.json")):

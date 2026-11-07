@@ -121,9 +121,20 @@ def build_web_payload() -> Dict[str, Any]:
 
     nn_net = get_or_train_neural_net(force_retrain=False)
 
+    ledger_summary = None
+    try:
+        import minutes_ledger
+        from neural_model import latest_finished_gw
+        target_gw = all_players[0].target_gw if all_players else 0
+        minutes_ledger.record(all_preds, target_gw)
+        ledger_summary = minutes_ledger.score(minutes_ledger.actual_minutes_from_players(all_players, latest_finished_gw()))
+    except Exception as exc:  # the ledger must never block the page
+        ledger_summary = {"error": str(exc)}
+
     return {
         "squads": squads_json,
         "nnMetrics": nn_net.metrics,
+        "minutesLedger": ledger_summary,
         "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
         "historicalBacktest": _load_historical_summary(),
@@ -781,6 +792,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           ${h.played60 ? pairBars("Correlation when the player plays 60+", h.played60.corr_points, h.played60.corr_naive_baseline, false, f2) : ""}
         </div>
         ${sel.top11_actual_per_week ? `<div class="summary-line"><span>Actual points of the 11 highest-predicted players, per test week</span><b>${f1(sel.top11_actual_per_week.model)} model · ${f1(sel.top11_actual_per_week.naive)} naive</b></div><div class="summary-line"><span>Actual points of the top captain pick, per test week</span><b>${f1(sel.captain_actual_per_week.model)} model · ${f1(sel.captain_actual_per_week.naive)} naive</b></div>` : ""}
+        ${(DATA.minutesLedger && DATA.minutesLedger.pooled && DATA.minutesLedger.pooled.n) ? `<div class="summary-line"><span>Live minutes ledger · P(60+) log-loss, ${DATA.minutesLedger.pooled.n} player-weeks</span><b>model ${(DATA.minutesLedger.pooled.model_ll60).toFixed(3)} · with news ${(DATA.minutesLedger.pooled.final_ll60).toFixed(3)} · base rate ${(DATA.minutesLedger.pooled.base_ll60).toFixed(3)}</b></div>` : ""}
         <div class="caveat">Current-season outcomes are excluded from training and tuning. Naive baseline: prior points per fixture (per appearance for the 60+ slice). Overall error is dominated by players who do not play; the 60+ slice is the decision-relevant one.</div><details><summary>Training & evaluation notes</summary><div class="caveat">Trained on ${esc((m.training_seasons || []).join(", "))}. ${m.test ? "Historical test rows are excluded from model selection and calibration." : "Validation is used for model selection."} Points output: ${esc(m.points_output || "direct")} (direct head, component sum or their average, chosen on validation weeks). Deployment is then refit on completed seasons. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms: ${esc(top)}.</div></details>`;
     })();
 

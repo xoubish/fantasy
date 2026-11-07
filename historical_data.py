@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fpl_data import CACHE_BOOTSTRAP, DATA_DIR, POSITION_MAP, USER_AGENT
+from market_odds import market_context
 from team_ratings import archived_matches, ratings_at
 
 ARCHIVE_DIR = DATA_DIR / "historical"
@@ -185,8 +186,13 @@ def fixture_features(archive: dict, row: dict) -> dict:
     """Point-in-time fixture context for a match row: Poisson expected goals and display ratings."""
     ratings = archive["ratings"][row["round"]]
     own = archive["codes"].get(row["team_id"])
-    opp = archive["codes"].get(int(row["opponent_team"]))
-    return ratings.fixture_context(own, opp, row["was_home"]) | {"difficulty": 3}
+    opp_id = int(row["opponent_team"])
+    opp = archive["codes"].get(opp_id)
+    names = archive["teams"]
+    home_name = names.get(row["team_id"] if row["was_home"] else opp_id, {}).get("name", "")
+    away_name = names.get(opp_id if row["was_home"] else row["team_id"], {}).get("name", "")
+    return (ratings.fixture_context(own, opp, row["was_home"]) | {"difficulty": 3}
+            | market_context(row.get("kickoff_time", ""), home_name, away_name, row["was_home"]))
 
 
 def build_historical_samples():
