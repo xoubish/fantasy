@@ -143,19 +143,44 @@ def _http_get_text(url: str, timeout: int = 12) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def fetch_player_summaries_concurrent(player_ids: List[int]) -> Dict[str, Any]:
+def fetch_player_summaries_concurrent(
+    player_ids: List[int],
+    latest_finished_gw: int = 0,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
     """
     Fetches `element-summary/{id}/` (which contains `history` for every GW this season
     and `history_past` for prior seasons) concurrently for active Premier League players.
+    Automatically refreshes cached players whenever a new Gameweek (`latest_finished_gw`)
+    has finished so last week's match logs are appended every week.
     """
     existing: Dict[str, Any] = {}
-    if CACHE_SUMMARIES.exists():
+    if CACHE_SUMMARIES.exists() and not force_refresh:
         try:
             existing = json.loads(CACHE_SUMMARIES.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
 
-    to_fetch = [pid for pid in player_ids if str(pid) not in existing]
+    def _needs_update(pid: int) -> bool:
+        entry = existing.get(str(pid))
+        if not entry:
+            return True
+        if latest_finished_gw <= 0:
+            return False
+        hist = entry.get("history", [])
+        if not hist:
+            return True
+        max_cached_finished_gw = max(
+            (
+                int(r.get("round", 0) or 0)
+                for r in hist
+                if r.get("team_h_score") is not None
+            ),
+            default=0,
+        )
+        return max_cached_finished_gw < latest_finished_gw
+
+    to_fetch = [pid for pid in player_ids if _needs_update(pid)]
     if not to_fetch:
         return existing
 
@@ -179,15 +204,19 @@ def fetch_player_summaries_concurrent(player_ids: List[int]) -> Dict[str, Any]:
     return existing
 
 
-def sync_live_fpl_data(fetch_player_histories: bool = True) -> Dict[str, Any]:
+def sync_live_fpl_data(
+    fetch_player_histories: bool = True, force_refresh_summaries: bool = False
+) -> Dict[str, Any]:
     """
     Downloads live FPL bootstrap-static, fixtures, and per-player match histories (`element-summary`).
+    Automatically detects newly finished gameweeks and appends last week's match data.
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     status = {
         "live_fpl_synced": False,
         "historical_synced": False,
         "summaries_synced": 0,
+        "latest_finished_gw": 0,
         "errors": [],
     }
 
@@ -201,18 +230,37 @@ def sync_live_fpl_data(fetch_player_histories: bool = True) -> Dict[str, Any]:
     except Exception as exc:
         status["errors"].append(f"FPL API fetch failed: {exc}")
 
-    # Fetch per-player element-summary for all active players with >= 180 mins
+    # Fetch per-player element-summary for all active players with >= 90 mins
     if (status["live_fpl_synced"] or CACHE_BOOTSTRAP.exists()) and fetch_player_histories:
         try:
             bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
+            fixtures = (
+                json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
+                if CACHE_FIXTURES.exists()
+                else []
+            )
+            latest_finished_gw = max(
+                (
+                    int(f.get("event", 0) or 0)
+                    for f in fixtures
+                    if f.get("finished") and f.get("team_h_score") is not None
+                ),
+                default=0,
+            )
+            status["latest_finished_gw"] = latest_finished_gw
+
             active_ids = [
                 int(el["id"])
                 for el in bootstrap.get("elements", [])
                 if el.get("status") != "u"
                 and not el.get("removed")
-                and int(el.get("minutes", 0) or 0) >= 180
+                and int(el.get("minutes", 0) or 0) >= 90
             ]
-            summaries = fetch_player_summaries_concurrent(active_ids)
+            summaries = fetch_player_summaries_concurrent(
+                active_ids,
+                latest_finished_gw=latest_finished_gw,
+                force_refresh=force_refresh_summaries,
+            )
             status["summaries_synced"] = len(summaries)
             status["historical_synced"] = True
         except Exception as exc:
@@ -222,45 +270,62 @@ def sync_live_fpl_data(fetch_player_histories: bool = True) -> Dict[str, Any]:
 
 
 def compute_team_strengths(
-    bootstrap: Dict[str, Any], fixtures: List[Dict[str, Any]]
+    bootstrap: Dict[str, Any],
+    fixtures: List[Dict[str, Any]],
+    max_gw: Optional[int] = None,
 ) -> Dict[int, Dict[str, int]]:
     """
-    Computes real Attack and Defence strength ratings (on the 950-1350 scale) for all 20
-    Premier League teams using:
-      1. Actual goals scored per game (GF/g) and goals conceded per game (GA/g) from finished matches
+    Computes time-decayed real Attack and Defence strength ratings (on the 950-1350 scale)
+    for all 20 Premier League teams using:
+      1. Exponentially time-weighted goals scored (GF/g) and conceded (GA/g) from finished matches
+         (decay = 0.86 per GW back, so the last 3-4 weeks matter much more than GW 1)
       2. Official `strength_overall_home` / `strength_overall_away` (2 to 5)
       3. Current Premier League table `position` (1 to 20)
     """
     teams = {int(t["id"]): t for t in bootstrap.get("teams", [])}
-    gf = {tid: 0 for tid in teams}
-    ga = {tid: 0 for tid in teams}
-    gp = {tid: 0 for tid in teams}
+    gf_w = {tid: 0.0 for tid in teams}
+    ga_w = {tid: 0.0 for tid in teams}
+    gp_w = {tid: 0.0 for tid in teams}
 
-    for fix in fixtures:
-        if fix.get("finished") and fix.get("team_h_score") is not None:
-            th, ta = int(fix["team_h"]), int(fix["team_a"])
-            sh, sa = int(fix["team_h_score"]), int(fix["team_a_score"])
-            if th in gf:
-                gf[th] += sh
-                ga[th] += sa
-                gp[th] += 1
-            if ta in gf:
-                gf[ta] += sa
-                ga[ta] += sh
-                gp[ta] += 1
+    finished_fixes = [
+        f
+        for f in fixtures
+        if f.get("finished")
+        and f.get("team_h_score") is not None
+        and (max_gw is None or int(f.get("event", 0) or 0) <= max_gw)
+    ]
+    latest_gw = max(
+        (int(f.get("event", 1) or 1) for f in finished_fixes),
+        default=1,
+    )
+
+    for fix in finished_fixes:
+        gw = int(fix.get("event", 1) or 1)
+        # Exponential recency weight: last week = 1.0, 4 weeks ago = 0.55, 8 weeks ago = 0.30
+        recency_w = 0.86 ** max(0, latest_gw - gw)
+        th, ta = int(fix["team_h"]), int(fix["team_a"])
+        sh, sa = int(fix["team_h_score"]), int(fix["team_a_score"])
+        if th in gf_w:
+            gf_w[th] += sh * recency_w
+            ga_w[th] += sa * recency_w
+            gp_w[th] += recency_w
+        if ta in gf_w:
+            gf_w[ta] += sa * recency_w
+            ga_w[ta] += sh * recency_w
+            gp_w[ta] += recency_w
 
     ratings: Dict[int, Dict[str, int]] = {}
     for tid, t in teams.items():
-        n = max(1, gp[tid])
-        gf_pg = gf[tid] / n  # range ~0.65 to 2.70
-        ga_pg = ga[tid] / n  # range ~0.55 to 2.35
+        n = max(0.5, gp_w[tid])
+        gf_pg = gf_w[tid] / n  # time-weighted goals scored per game
+        ga_pg = ga_w[tid] / n  # time-weighted goals conceded per game
         pos_rank = int(t.get("position", 10) or 10)
         str_h = int(t.get("strength_overall_home", 3) or 3)
         str_a = int(t.get("strength_overall_away", 3) or 3)
 
-        # Higher attack rating = team scores more goals & has higher overall strength
+        # Higher attack rating = team scores more goals recently & has higher overall strength
         att_base = 1000 + int((gf_pg - 0.65) * 140) + (20 - pos_rank) * 4
-        # Higher defence rating = team concedes FEWER goals & has higher overall strength
+        # Higher defence rating = team concedes FEWER goals recently & has higher overall strength
         def_base = 1000 + int((2.35 - ga_pg) * 150) + (20 - pos_rank) * 4
 
         ratings[tid] = {

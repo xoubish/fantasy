@@ -359,9 +359,44 @@ def cmd_add_news(args: argparse.Namespace) -> None:
 
 
 def cmd_train_nn(args: argparse.Namespace) -> None:
-    print("Training Supervised FPL Neural Network (22 -> 36 -> 18 -> 1) on Real 2026/27 PL Match Logs...")
+    print("Training Time-Aware Supervised FPL Neural Network (22 -> 36 -> 18 -> 1) on Real 2026/27 PL Match Logs...")
     net = get_or_train_neural_net(force_retrain=True)
     print(json.dumps(net.metrics, indent=2))
+
+
+def cmd_weekly_update(args: argparse.Namespace) -> None:
+    """
+    End-to-end weekly pipeline:
+      1. Syncs live FPL API + appends newly finished GW match logs (`element-summary`)
+      2. Scrapes latest Premier League injury & press conference news
+      3. Retrains the 22-feature time-decayed neural network on all completed GWs
+      4. Regenerates `index.html`, `data/latest_report.md`, and `data/my_squad_pitch.png`
+    """
+    print("=== Step 1/4: Syncing Live FPL API & Appending Last Week's Match Logs ===")
+    fpl_status = sync_live_fpl_data(fetch_player_histories=True)
+    print(
+        f"    FPL Synced: {fpl_status['live_fpl_synced']} | "
+        f"Latest Finished GW: {fpl_status.get('latest_finished_gw')} | "
+        f"Player Histories Cached: {fpl_status['summaries_synced']}"
+    )
+
+    print("=== Step 2/4: Scraping Premier League Team & Injury News ===")
+    news_status = scrape_sports_websites()
+    print(f"    Articles fetched: {news_status['articles_fetched']}")
+
+    print("=== Step 3/4: Retraining Time-Aware Neural Network (EWMA + Temporal Decay) ===")
+    net = get_or_train_neural_net(force_retrain=True)
+    print(
+        f"    Trained on {net.metrics.get('real_gw_samples')} match logs "
+        f"(up to GW {net.metrics.get('latest_trained_gw')}) | Val MAE: {net.metrics.get('val_mae')}"
+    )
+
+    print("=== Step 4/4: Rebuilding Web App (index.html) & Squad Report ===")
+    from web_app import build_static_html
+
+    build_static_html()
+    cmd_analyze(args)
+    print("=== Weekly Update Complete! ===")
 
 
 def main() -> None:
@@ -370,9 +405,15 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_sync = sub.add_parser("sync", help="Fetch live FPL API, 3yr history, and sports news")
+    p_sync = sub.add_parser("sync", help="Fetch live FPL API, player match logs, and sports news")
     p_sync.add_argument("--deep", action="store_true", help="Fetch per-player element-summary")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_wk = sub.add_parser(
+        "weekly-update",
+        help="Full weekly refresh: pull last week's GW data, retrain time-aware NN, and rebuild index.html",
+    )
+    p_wk.set_defaults(func=cmd_weekly_update)
 
     p_an = sub.add_parser("analyze", help="Analyze your squad in my_squad.json")
     p_an.set_defaults(func=cmd_analyze)

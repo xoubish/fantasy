@@ -1,0 +1,42 @@
+name: Weekly FPL Data Sync, Neural Net Retrain & Page Rebuild
+
+on:
+  schedule:
+    # Runs every Tuesday at 08:00 UTC (after Monday Night Football & bonus points finalize)
+    - cron: "0 8 * * 2"
+    # Runs every Friday at 10:30 UTC (after Friday morning manager press conferences before GW deadline)
+    - cron: "30 10 * * 5"
+  workflow_dispatch: # Allows manual 1-click trigger from the GitHub Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  update-fpl-page:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Matplotlib for Pitch Figures
+        run: pip install matplotlib
+
+      - name: Sync Last Week's FPL Match Logs, Retrain Time-Aware Neural Net & Rebuild index.html
+        run: python3 fpl_assistant.py weekly-update
+
+      - name: Commit and Push Updated Predictions & Page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html data/nn_weights.json data/latest_report.md data/my_squad_pitch.png
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore(weekly-update): append latest GW match logs, retrain time-aware NN & rebuild page"
+            git push
+          fi
