@@ -42,6 +42,9 @@ USER_AGENT = (
 
 POSITION_MAP = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
+# Number of upcoming gameweeks attached to every player (used by the transfer planner)
+HORIZON_GWS = 5
+
 
 @dataclass
 class HistoricalSeasonStat:
@@ -108,8 +111,9 @@ class PlayerRecord:
     opp_defence_strength: int  # Opponent defence strength in this venue
     historical_seasons: List[HistoricalSeasonStat] = field(default_factory=list)
     gw_history: List[Dict[str, Any]] = field(default_factory=list)
-    upcoming_3gw_fixtures: List[Dict[str, Any]] = field(default_factory=list)
+    upcoming_3gw_fixtures: List[Dict[str, Any]] = field(default_factory=list)  # next HORIZON_GWS gameweeks
     fixture_run_3gw: str = ""
+    target_gw: int = 0
 
     @property
     def historical_ppg_3yr(self) -> float:
@@ -232,7 +236,7 @@ def sync_live_fpl_data(
     except Exception as exc:
         status["errors"].append(f"FPL API fetch failed: {exc}")
 
-    # Fetch per-player element-summary for all active players with >= 90 mins
+    # Fetch per-player element-summary for every active player with > 0 mins
     if (status["live_fpl_synced"] or CACHE_BOOTSTRAP.exists()) and fetch_player_histories:
         try:
             bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
@@ -256,7 +260,7 @@ def sync_live_fpl_data(
                 for el in bootstrap.get("elements", [])
                 if el.get("status") != "u"
                 and not el.get("removed")
-                and int(el.get("minutes", 0) or 0) >= 90
+                and int(el.get("minutes", 0) or 0) > 0
             ]
             summaries = fetch_player_summaries_concurrent(
                 active_ids,
@@ -282,7 +286,8 @@ def compute_team_strengths(
       1. Exponentially time-weighted goals scored (GF/g) and conceded (GA/g) from finished matches
          (decay = 0.86 per GW back, so the last 3-4 weeks matter much more than GW 1)
       2. Official `strength_overall_home` / `strength_overall_away` (2 to 5)
-      3. Current Premier League table `position` (1 to 20)
+    (The live league-table position is deliberately NOT used: it would leak future
+    information into walk-forward backtests.)
     """
     teams = {int(t["id"]): t for t in bootstrap.get("teams", [])}
     gf_w = {tid: 0.0 for tid in teams}
@@ -321,14 +326,13 @@ def compute_team_strengths(
         n = max(0.5, gp_w[tid])
         gf_pg = gf_w[tid] / n  # time-weighted goals scored per game
         ga_pg = ga_w[tid] / n  # time-weighted goals conceded per game
-        pos_rank = int(t.get("position", 10) or 10)
         str_h = int(t.get("strength_overall_home", 3) or 3)
         str_a = int(t.get("strength_overall_away", 3) or 3)
 
         # Higher attack rating = team scores more goals recently & has higher overall strength
-        att_base = 1000 + int((gf_pg - 0.65) * 140) + (20 - pos_rank) * 4
+        att_base = 1040 + int((gf_pg - 0.65) * 140)
         # Higher defence rating = team concedes FEWER goals recently & has higher overall strength
-        def_base = 1000 + int((2.35 - ga_pg) * 150) + (20 - pos_rank) * 4
+        def_base = 1040 + int((2.35 - ga_pg) * 150)
 
         ratings[tid] = {
             "att_home": max(960, min(1360, att_base + str_h * 18)),
@@ -390,8 +394,9 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
         else:
             target_gw = 10
 
-    # Map team_id -> list of upcoming 3-GW fixture dicts (target_gw, target_gw+1, target_gw+2)
-    horizon_gws = [target_gw, target_gw + 1, target_gw + 2]
+    # Map team_id -> list of upcoming fixture dicts for the next HORIZON_GWS gameweeks
+    # (each dict carries its "gw", so blank and double gameweeks are represented naturally)
+    horizon_gws = [target_gw + k for k in range(HORIZON_GWS)]
     upcoming_3gw_by_team: Dict[int, List[Dict[str, Any]]] = {tid: [] for tid in teams_by_id}
     for gw_ev in horizon_gws:
         for fix in fixtures:
@@ -568,6 +573,7 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
                 fixture_run_3gw=" → ".join(
                     f["opponent"] for f in upcoming_3gw_by_team.get(tid, [fix_info])[:3]
                 ),
+                target_gw=int(target_gw),
             )
         )
     return records
