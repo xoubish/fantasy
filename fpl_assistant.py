@@ -187,7 +187,7 @@ def format_markdown_report(
 
     if plan_view is not None:
         lines.append(
-            f"\n## 4b. Multi-Gameweek Transfer Plan (exact MILP, FT banked to 5, -4 per extra transfer)\n"
+            f"\n## 4b. Multi-Gameweek Transfer Plan (FT banked to 5, -4 per extra transfer)\n"
         )
         lines.append("| GW | Free transfers | Out | In | Hit | Captain | XI xP |")
         lines.append("| :---: | :---: | :--- | :--- | :---: | :--- | :---: |")
@@ -423,10 +423,12 @@ def cmd_add_news(args: argparse.Namespace) -> None:
 
 def _print_model_metrics(net) -> None:
     m = net.metrics
-    h = m.get("holdout", {})
+    h = m.get("test", m.get("validation", m.get("holdout", {})))
+    label = "Test" if m.get("test") else "Validation (used for epoch selection)"
+    weeks = m.get("test_gws") if m.get("test") else m.get("holdout_gws")
     print(
         f"    {m.get('architecture')} | {m.get('real_gw_samples')} player-gameweek rows through GW {m.get('latest_trained_gw')}\n"
-        f"    Holdout {m.get('holdout_gws')}: MAE vs actual points {h.get('mae_points')} "
+        f"    {label} {weeks}: MAE vs actual points {h.get('mae_points')} "
         f"(naive baseline {h.get('mae_naive_baseline')}, constant {h.get('mae_constant_baseline')}) | "
         f"corr {h.get('corr_points')} (naive {h.get('corr_naive_baseline')})\n"
         f"    Minutes log-loss {h.get('minutes_logloss')} (base rate {h.get('minutes_logloss_baseline')}) | "
@@ -509,7 +511,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     p_sync = sub.add_parser("sync", help="Fetch live FPL API, player match logs, and sports news")
-    p_sync.add_argument("--deep", action="store_true", help="Fetch per-player element-summary")
+    p_sync.add_argument("--deep", action="store_true", default=True, help="Fetch player histories (default; retained for compatibility)")
+    p_sync.add_argument("--shallow", dest="deep", action="store_false", help="Skip player histories (not sufficient for initial training)")
     p_sync.set_defaults(func=cmd_sync)
 
     p_wk = sub.add_parser(

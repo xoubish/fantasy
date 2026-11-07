@@ -18,7 +18,9 @@ import json
 import sqlite3
 import time
 import urllib.request
+import warnings
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -157,36 +159,18 @@ def fetch_player_summaries_concurrent(
     """
     Fetches `element-summary/{id}/` (which contains `history` for every GW this season
     and `history_past` for prior seasons) concurrently for active Premier League players.
-    Automatically refreshes cached players whenever a new Gameweek (`latest_finished_gw`)
-    has finished so last week's match logs are appended every week.
+    Refresh every requested player on each sync. A gameweek number cannot certify a
+    complete double gameweek or finalized bonus points. Old entries remain a fallback
+    if an individual request fails. The legacy freshness arguments remain compatible.
     """
     existing: Dict[str, Any] = {}
-    if CACHE_SUMMARIES.exists() and not force_refresh:
+    if CACHE_SUMMARIES.exists():
         try:
             existing = json.loads(CACHE_SUMMARIES.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
 
-    def _needs_update(pid: int) -> bool:
-        entry = existing.get(str(pid))
-        if not entry:
-            return True
-        if latest_finished_gw <= 0:
-            return False
-        hist = entry.get("history", [])
-        if not hist:
-            return True
-        max_cached_finished_gw = max(
-            (
-                int(r.get("round", 0) or 0)
-                for r in hist
-                if r.get("team_h_score") is not None
-            ),
-            default=0,
-        )
-        return max_cached_finished_gw < latest_finished_gw
-
-    to_fetch = [pid for pid in player_ids if _needs_update(pid)]
+    to_fetch = list(dict.fromkeys(player_ids))
     if not to_fetch:
         return existing
 
@@ -197,6 +181,7 @@ def fetch_player_summaries_concurrent(
             "history_past": data.get("history_past", []),
         }
 
+    failed = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
         futures = {pool.submit(_fetch_one, pid): pid for pid in to_fetch}
         for fut in concurrent.futures.as_completed(futures):
@@ -204,7 +189,10 @@ def fetch_player_summaries_concurrent(
                 k, val = fut.result()
                 existing[k] = val
             except Exception:
-                continue
+                failed.append(futures[fut])
+
+    if failed:
+        warnings.warn(f"Could not refresh {len(failed)} player histories; retained any cached entries.")
 
     CACHE_SUMMARIES.write_text(json.dumps(existing), encoding="utf-8")
     return existing
@@ -236,7 +224,7 @@ def sync_live_fpl_data(
     except Exception as exc:
         status["errors"].append(f"FPL API fetch failed: {exc}")
 
-    # Fetch per-player element-summary for every active player with > 0 mins
+    # Include unused players: zero-minute rows are needed by the availability model.
     if (status["live_fpl_synced"] or CACHE_BOOTSTRAP.exists()) and fetch_player_histories:
         try:
             bootstrap = json.loads(CACHE_BOOTSTRAP.read_text(encoding="utf-8"))
@@ -260,7 +248,6 @@ def sync_live_fpl_data(
                 for el in bootstrap.get("elements", [])
                 if el.get("status") != "u"
                 and not el.get("removed")
-                and int(el.get("minutes", 0) or 0) > 0
             ]
             summaries = fetch_player_summaries_concurrent(
                 active_ids,
@@ -343,10 +330,23 @@ def compute_team_strengths(
     return ratings
 
 
+def next_editable_gameweek(bootstrap: Dict[str, Any], now: Optional[datetime] = None) -> int:
+    """Choose the first deadline still open, irrespective of fixtures in progress."""
+    now = now or datetime.now(timezone.utc)
+    future = []
+    for event in bootstrap.get("events", []):
+        deadline = event.get("deadline_time")
+        if deadline and datetime.fromisoformat(deadline.replace("Z", "+00:00")) > now:
+            future.append((deadline, int(event["id"])))
+    if not future:
+        raise RuntimeError("No future gameweek deadline in the cache. Sync data or specify target_gw for historical analysis.")
+    return min(future)[1]
+
+
 def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
     """
     Loads ONLY active players from the 20 current Premier League teams in `bootstrap_static.json`.
-    Automatically picks the active/upcoming unfinished Gameweek (e.g. GW 10) unless `target_gw` is specified.
+    Picks the next editable gameweek unless `target_gw` is explicitly supplied.
     """
     if not CACHE_BOOTSTRAP.exists() or not CACHE_FIXTURES.exists():
         raise RuntimeError(
@@ -378,21 +378,8 @@ def load_players(target_gw: Optional[int] = None) -> List[PlayerRecord]:
     }
     team_ratings = compute_team_strengths(bootstrap, fixtures)
 
-    # Determine target Gameweek: pick the earliest GW that still has unfinished matches (GW 10)
     if target_gw is None:
-        events = bootstrap.get("events", [])
-        current_ev = next((e for e in events if e.get("is_current")), None)
-        next_ev = next((e for e in events if e.get("is_next")), None)
-        if current_ev:
-            gw_id = int(current_ev["id"])
-            gw_fixes = [f for f in fixtures if f.get("event") == gw_id]
-            # If the majority of matches in current_ev are still unfinished, use current_ev (GW 10)
-            unfinished = sum(1 for f in gw_fixes if not f.get("finished"))
-            target_gw = gw_id if unfinished >= 5 else (int(next_ev["id"]) if next_ev else gw_id)
-        elif next_ev:
-            target_gw = int(next_ev["id"])
-        else:
-            target_gw = 10
+        target_gw = next_editable_gameweek(bootstrap)
 
     # Map team_id -> list of upcoming fixture dicts for the next HORIZON_GWS gameweeks
     # (each dict carries its "gw", so blank and double gameweeks are represented naturally)

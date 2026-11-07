@@ -110,13 +110,13 @@
    "naive_freehit": 69,
    "naive_freehit_pred": 96.2,
    "naive_freehit_captain": "Bogle",
-   "model_rolling": 57,
-   "model_rolling_hits": 2,
-   "model_rolling_pred": 68.6,
-   "model_rolling_captain": "Cunha",
-   "naive_rolling": 50,
-   "naive_rolling_hits": 1,
-   "naive_rolling_pred": 91.0,
+   "model_rolling": 46,
+   "model_rolling_hits": 4,
+   "model_rolling_pred": 77.9,
+   "model_rolling_captain": "Trafford",
+   "naive_rolling": 48,
+   "naive_rolling_hits": 0,
+   "naive_rolling_pred": 89.2,
    "naive_rolling_captain": "Bogle"
   },
   {
@@ -151,13 +151,13 @@
    "naive_freehit": 70,
    "naive_freehit_pred": 93.6,
    "naive_freehit_captain": "Gro\u00df",
-   "model_rolling": 62,
+   "model_rolling": 53,
    "model_rolling_hits": 0,
    "model_rolling_pred": 57.3,
    "model_rolling_captain": "Haaland",
-   "naive_rolling": 45,
+   "naive_rolling": 54,
    "naive_rolling_hits": 0,
-   "naive_rolling_pred": 87.2,
+   "naive_rolling_pred": 86.2,
    "naive_rolling_captain": "Gro\u00df"
   },
   {
@@ -192,13 +192,13 @@
    "naive_freehit": 49,
    "naive_freehit_pred": 89.8,
    "naive_freehit_captain": "Gro\u00df",
-   "model_rolling": 51,
+   "model_rolling": 57,
    "model_rolling_hits": 0,
-   "model_rolling_pred": 54.3,
+   "model_rolling_pred": 51.2,
    "model_rolling_captain": "Haaland",
-   "naive_rolling": 35,
+   "naive_rolling": 37,
    "naive_rolling_hits": 0,
-   "naive_rolling_pred": 84.2,
+   "naive_rolling_pred": 84.8,
    "naive_rolling_captain": "Gro\u00df"
   },
   {
@@ -234,13 +234,13 @@
    "naive_freehit": 38,
    "naive_freehit_pred": 85.0,
    "naive_freehit_captain": "De Cuyper",
-   "model_rolling": 33,
+   "model_rolling": 48,
    "model_rolling_hits": 0,
-   "model_rolling_pred": 52.1,
+   "model_rolling_pred": 52.7,
    "model_rolling_captain": "Haaland",
-   "naive_rolling": 22,
+   "naive_rolling": 20,
    "naive_rolling_hits": 0,
-   "naive_rolling_pred": 79.7,
+   "naive_rolling_pred": 80.3,
    "naive_rolling_captain": "De Cuyper"
   },
   {
@@ -273,17 +273,18 @@
    "naive_freehit": 46,
    "naive_freehit_pred": 81.4,
    "naive_freehit_captain": "Haaland",
-   "model_rolling": 28,
-   "model_rolling_hits": 1,
-   "model_rolling_pred": 49.7,
+   "model_rolling": 32,
+   "model_rolling_hits": 2,
+   "model_rolling_pred": 52.5,
    "model_rolling_captain": "Isak",
-   "naive_rolling": 57,
-   "naive_rolling_hits": 0,
-   "naive_rolling_pred": 74.1,
-   "naive_rolling_captain": "De Cuyper"
+   "naive_rolling": 37,
+   "naive_rolling_hits": 2,
+   "naive_rolling_pred": 78.8,
+   "naive_rolling_captain": "Haaland"
   }
  ],
  "summary": {
+  "limitations": "Historical match logs are time-filtered; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. This is not a fully point-in-time simulation.",
   "weeks_tested": [
    3,
    4,
@@ -298,29 +299,29 @@
   "totals": {
    "model_freehit": 409,
    "naive_freehit": 352,
-   "model_rolling": 340,
-   "naive_rolling": 283,
+   "model_rolling": 345,
+   "naive_rolling": 270,
    "fpl_average": 377
   },
   "model_rolling_vs_fpl_average": {
-   "mean": -5.3,
-   "sd": 9.6,
-   "total": -37,
-   "weeks_won": 3,
-   "weeks": 7
-  },
-  "naive_rolling_vs_fpl_average": {
-   "mean": -13.4,
-   "sd": 13.0,
-   "total": -94,
+   "mean": -4.6,
+   "sd": 6.5,
+   "total": -32,
    "weeks_won": 2,
    "weeks": 7
   },
+  "naive_rolling_vs_fpl_average": {
+   "mean": -15.3,
+   "sd": 9.6,
+   "total": -107,
+   "weeks_won": 0,
+   "weeks": 7
+  },
   "model_rolling_vs_naive_rolling": {
-   "mean": 8.1,
-   "sd": 16.0,
-   "total": 57,
-   "weeks_won": 6,
+   "mean": 10.7,
+   "sd": 12.6,
+   "total": 75,
+   "weeks_won": 4,
    "weeks": 7
   },
   "model_freehit_vs_naive_freehit": {
@@ -345,7 +346,7 @@
    "model_corr": 0.4,
    "naive_corr": 0.364
   },
-  "total_hits_model_rolling": 3,
-  "total_hits_naive_rolling": 1
+  "total_hits_model_rolling": 6,
+  "total_hits_naive_rolling": 2
  }
 }

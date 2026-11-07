@@ -172,7 +172,7 @@ def predict_player(player: PlayerRecord, articles: List[NewsArticle]) -> PlayerP
 
     expected_pts = gw_xps.get(target_gw, 0.0)
     xp_if_90 = max(0.5, base["xp_full"] + tactical_delta)
-    final_haul_prob = round(max(0.01, min(0.85, (base["haul"] + haul_boost) * news.start_probability)), 3)
+    final_haul_prob = round(max(0.0, min(0.85, (base["haul"] + haul_boost) * news.start_probability)), 3) if fixtures_by_gw.get(target_gw) else 0.0
 
     horizon_3gw_xp = sum(
         w * gw_xps.get(target_gw + k, 0.0) for k, w in enumerate(HORIZON_WEIGHTS_3GW)
@@ -298,7 +298,7 @@ def optimize_starting_xi(squad_predictions: List[PlayerPrediction]) -> Optimized
 def build_dream_xi(all_predictions: List[PlayerPrediction], max_per_club: int = 3) -> OptimizedSquadResult:
     """Best Free-Hit style XI from the whole league (MILP with an unlimited budget)."""
     res, _ = get_best_squad_of_the_week(all_predictions, budget=1000.0, max_per_club=max_per_club)
-    res.tactical_notes = ["Optimal Free Hit XI respecting max 3 players per club (unlimited budget)."]
+    res.tactical_notes.append("Free Hit-style XI respecting max 3 players per club (unlimited budget).")
     return res
 
 
@@ -374,9 +374,22 @@ def _target_gw(preds: Sequence[PlayerPrediction]) -> int:
 
 
 def _result_from_week_plan(week: WeekPlan, by_id: Dict[int, PlayerPrediction]) -> OptimizedSquadResult:
-    squad = [by_id[pid] for pid in week.squad_ids]
-    res = optimize_starting_xi(squad)
-    return res
+    starters = [by_id[pid] for pid in week.lineup_ids]
+    bench = [by_id[pid] for pid in week.bench_order]
+    captain, vice = by_id[week.captain_id], by_id[week.vice_id]
+    counts = [sum(p.player.position == pos for p in starters) for pos in ("DEF", "MID", "FWD")]
+    gap = f"{week.solver_gap:.2%}" if week.solver_gap is not None else "unknown"
+    return OptimizedSquadResult(
+        formation="-".join(map(str, counts)), starting_xi=starters,
+        bench_gkp=next(p for p in bench if p.player.position == "GKP"),
+        bench_outfield=[p for p in bench if p.player.position != "GKP"],
+        captain=captain, vice_captain=vice,
+        total_expected_points=round(week.expected_points, 1),
+        total_floor=sum(p.floor_points for p in starters) + captain.floor_points,
+        total_ceiling=sum(p.ceiling_points for p in starters) + captain.ceiling_points,
+        tactical_notes=[f"Solver: {week.solver_status} | gap {gap} | {week.candidate_count} candidates. "
+                        "Optimality applies only to this candidate pool."],
+    )
 
 
 def get_best_squad_of_the_week(
@@ -403,7 +416,7 @@ def get_best_squad_of_the_week(
     by_id = {p.player.id: p for p in all_predictions}
     res = _result_from_week_plan(week, by_id)
     cost = round(sum(by_id[pid].player.price for pid in week.squad_ids), 1)
-    res.tactical_notes.insert(0, f"Full 15-man squad cost: £{cost:.1f}m / £{budget:.1f}m | max {max_per_club} per club | exact MILP optimum.")
+    res.tactical_notes.insert(0, f"Full 15-man squad cost: £{cost:.1f}m / £{budget:.1f}m | max {max_per_club} per club.")
     return res, cost
 
 
@@ -441,7 +454,7 @@ def get_best_squad_variations(
     hw5 = {gw + k: 0.85**k for k in range(HORIZON_GWS)}
 
     archetypes = [
-        dict(name="Variation 1: This Gameweek Optimal", subtitle="Exact MILP optimum of single-gameweek expected points under £100.0m", kw=dict()),
+        dict(name="Variation 1: This Gameweek", subtitle=f"Single-gameweek squad under £{budget:.1f}m, optimized within the candidate pool", kw=dict()),
         dict(name="Variation 2: 5-Gameweek Fixture Run", subtitle="Same 15 scored over the next five gameweeks (decaying weights) — a squad to hold, not a Free Hit", kw=dict(horizon_weights=hw5)),
         dict(name="Variation 3: No Premiums", subtitle="Every player under £11.0m — spreads the budget instead of one superstar", kw=dict(exclude=premium_ids)),
         dict(name="Variation 4: Clean-Sheet Fortress", subtitle="At least four defenders start; scored over the next three gameweeks", kw=dict(min_def_in_xi=4, horizon_weights=hw3)),
@@ -452,7 +465,8 @@ def get_best_squad_variations(
     variations: List[SquadVariation] = []
     for idx, arch in enumerate(archetypes[:num_variations], start=1):
         kw = dict(arch["kw"])
-        pool = select_candidate_pool(base_pool, gws5 if kw.get("horizon_weights") else [gw])
+        excluded = set(kw.get("exclude", []))
+        pool = select_candidate_pool([p for p in base_pool if p.id not in excluded], gws5 if kw.get("horizon_weights") else [gw])
         week = solve_squad(pool, gw, budget=budget, max_per_club=max_per_club, **kw)
         if week is None:
             continue
@@ -480,6 +494,8 @@ class TransferPlanView:
                 f"GW {w.gw}: FT={w.free_transfers_before} | OUT: {outs} | IN: {ins}{hit} | C: {cap} | XI xP {w.expected_points:.1f}"
             )
         lines.append(f"Plan objective (xP minus hits): {self.plan.objective:.1f} | total hits: {self.plan.total_hits}")
+        gap = f"{self.plan.solver_gap:.2%}" if self.plan.solver_gap is not None else "unknown"
+        lines.append(f"Solver: {self.plan.solver_status} | gap {gap} | {self.plan.candidate_count} candidates")
         return lines
 
 

@@ -3,19 +3,19 @@ Multi-Head FPL Neural Network (neural_model.py)
 
 A small numpy feed-forward network trained on REAL per-gameweek FPL outcomes:
 
-  shared trunk  (F -> 64 -> 32)
+  shared trunk  (F -> 48 -> 24)
     head "minutes": 3-class softmax  P(0 min) / P(1-59 min) / P(60+ min)
     head "points":  expected FPL points GIVEN the player plays 60+ minutes
     head "haul":    P(points >= 9)   GIVEN the player plays 60+ minutes
 
 Unconditional expected points = P(60+) * xP_full + P(1-59) * cameo_points.
 
-Evaluation is TIME-ORDERED: the model is trained on gameweeks <= K and scored on the
-following gameweeks against actual points, next to two naive baselines. Those holdout
-numbers are what `metrics` reports. The deployed weights are then refit on all rows.
+Evaluation is TIME-ORDERED: epochs are chosen on validation weeks, then the selected
+model is scored once on later test weeks. Baseline constants use training data only.
+The deployed weights are then refit on all rows.
 
-Every feature is computed strictly from match logs BEFORE the gameweek being predicted,
-so the same code path serves training rows, live predictions and walk-forward backtests.
+Match-log features use rows BEFORE the gameweek being predicted. Roster and fixture
+metadata come from the current snapshot, so historical evaluation has that limitation.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from fpl_data import (
 )
 
 NN_WEIGHTS_PATH = DATA_DIR / "nn_weights.json"
-MODEL_VERSION = "mh-v1"
+MODEL_VERSION = "mh-v2"
 
 # Average FPL points of a 1-59 minute appearance (re-estimated from data at train time)
 DEFAULT_CAMEO_POINTS = 1.15
@@ -293,12 +293,15 @@ def features_from_history(
 
 
 _LATEST_FINISHED_GW_CACHE: Optional[int] = None
+_LATEST_FINISHED_GW_SIGNATURE = None
 
 
 def latest_finished_gw() -> int:
     """Last gameweek in which EVERY fixture is finished (from fixtures.json), cached per process."""
-    global _LATEST_FINISHED_GW_CACHE
-    if _LATEST_FINISHED_GW_CACHE is None:
+    global _LATEST_FINISHED_GW_CACHE, _LATEST_FINISHED_GW_SIGNATURE
+    signature = (CACHE_FIXTURES.stat().st_mtime_ns, CACHE_FIXTURES.stat().st_size) if CACHE_FIXTURES.exists() else None
+    if _LATEST_FINISHED_GW_CACHE is None or signature != _LATEST_FINISHED_GW_SIGNATURE:
+        _LATEST_FINISHED_GW_SIGNATURE = signature
         if not CACHE_FIXTURES.exists():
             _LATEST_FINISHED_GW_CACHE = 0
         else:
@@ -320,7 +323,7 @@ def _finished_rows(player: PlayerRecord, max_gw: Optional[int] = None) -> List[D
     return [
         r
         for r in player.gw_history
-        if r.get("team_h_score") is not None and (cap <= 0 or int(r.get("round", 0) or 0) <= cap)
+        if r.get("team_h_score") is not None and int(r.get("round", 0) or 0) <= cap
     ]
 
 
@@ -488,6 +491,7 @@ class FPLNeuralNetwork:
         self.sigma = np.ones(in_dim)
         self.cameo_points = DEFAULT_CAMEO_POINTS
         self.metrics: Dict[str, Any] = {}
+        self.baselines = {"points": 0.0, "minutes": [1/3, 1/3, 1/3], "haul": 0.1}
 
     # ---- forward ----
     def _forward(self, X: np.ndarray) -> Dict[str, np.ndarray]:
@@ -544,6 +548,8 @@ class FPLNeuralNetwork:
         verbose: bool = False,
         on_epoch_end: Optional[Callable[[int, "FPLNeuralNetwork"], None]] = None,
     ) -> None:
+        if not samples:
+            raise ValueError("No completed training samples. Run `python3 fpl_assistant.py sync`; at least two gameweeks of histories are needed.")
         rng = np.random.default_rng(seed)
         X = np.asarray([s.features for s in samples], dtype=float)
         mins = np.asarray([s.minutes for s in samples], dtype=float)
@@ -551,6 +557,11 @@ class FPLNeuralNetwork:
         y_m = np.where(mins <= 0, 0, np.where(mins < 60, 1, 2))
         full = (mins >= 60).astype(float)
         y_h = ((pts >= HAUL_THRESHOLD) & (mins >= 60)).astype(float)
+        self.baselines = {
+            "points": float(pts.mean()),
+            "minutes": (np.bincount(y_m, minlength=3) / len(samples)).tolist(),
+            "haul": float(y_h[mins >= 60].mean()) if (mins >= 60).any() else 0.0,
+        }
         cameo_rows = (mins > 0) & (mins < 60)
         if cameo_rows.sum() >= 20:
             self.cameo_points = float(pts[cameo_rows].mean())
@@ -639,7 +650,7 @@ class FPLNeuralNetwork:
         y_m = np.where(mins <= 0, 0, np.where(mins < 60, 1, 2))
         pm = np.stack([r["p_none"], r["p_cameo"], r["p_full"]], axis=1)
         ll = -np.log(np.clip(pm[np.arange(len(samples)), y_m], 1e-6, 1)).mean()
-        base_rates = np.bincount(y_m, minlength=3) / len(samples)
+        base_rates = np.asarray(self.baselines["minutes"])
         ll_base = -np.log(np.clip(base_rates[y_m], 1e-6, 1)).mean()
         full = mins >= 60
         haul_y = (actual >= HAUL_THRESHOLD)[full].astype(float)
@@ -648,16 +659,16 @@ class FPLNeuralNetwork:
             "n": float(len(samples)),
             "mae_points": float(np.abs(pred - actual).mean()),
             "mae_naive_baseline": float(np.abs(naive - actual).mean()),
-            "mae_constant_baseline": float(np.abs(actual.mean() - actual).mean()),
+            "mae_constant_baseline": float(np.abs(self.baselines["points"] - actual).mean()),
             "rmse_points": float(np.sqrt(((pred - actual) ** 2).mean())),
             "bias_points": float((pred - actual).mean()),
-            "corr_points": float(np.corrcoef(pred, actual)[0, 1]) if pred.std() > 0 else 0.0,
-            "corr_naive_baseline": float(np.corrcoef(naive, actual)[0, 1]) if naive.std() > 0 else 0.0,
+            "corr_points": float(np.corrcoef(pred, actual)[0, 1]) if pred.std() > 1e-12 and actual.std() > 1e-12 else 0.0,
+            "corr_naive_baseline": float(np.corrcoef(naive, actual)[0, 1]) if naive.std() > 1e-12 and actual.std() > 1e-12 else 0.0,
             "minutes_logloss": float(ll),
             "minutes_logloss_baseline": float(ll_base),
             "minutes_accuracy": float((pm.argmax(axis=1) == y_m).mean()),
             "haul_brier": float(((haul_p - haul_y) ** 2).mean()) if full.any() else 0.0,
-            "haul_brier_baseline": float(((haul_y.mean() - haul_y) ** 2).mean()) if full.any() else 0.0,
+            "haul_brier_baseline": float(((self.baselines["haul"] - haul_y) ** 2).mean()) if full.any() else 0.0,
             "haul_base_rate": float(haul_y.mean()) if full.any() else 0.0,
         }
         # Error among the players you would actually pick (model's top 15% by xP)
@@ -686,6 +697,7 @@ class FPLNeuralNetwork:
             "mu": self.mu.tolist(),
             "sigma": self.sigma.tolist(),
             "cameo_points": self.cameo_points,
+            "baselines": self.baselines,
             "params": {k: v.tolist() for k, v in self.params.items()},
             "metrics": self.metrics,
         }
@@ -702,6 +714,7 @@ class FPLNeuralNetwork:
         net.mu = np.asarray(data["mu"], dtype=float)
         net.sigma = np.asarray(data["sigma"], dtype=float)
         net.cameo_points = float(data.get("cameo_points", DEFAULT_CAMEO_POINTS))
+        net.baselines = data["baselines"]
         net.metrics = data.get("metrics", {})
         return net
 
@@ -715,19 +728,29 @@ def train_with_time_holdout(
     max_epochs: int = 60,
     seed: int = 42,
     verbose: bool = False,
+    test_gws: int = 1,
 ) -> Tuple[FPLNeuralNetwork, Dict[str, Any]]:
     """
-    1. Train on gameweeks <= K, score every epoch on gameweeks > K (actual points), and keep
-       the epoch count with the lowest holdout MAE (early stopping on future gameweeks).
-    2. Report holdout metrics next to naive baselines.
+    1. Select epochs on chronological validation weeks preceding the test window.
+    2. Evaluate the chosen model once on the later test weeks, never used for selection.
     3. Refit on ALL rows with that epoch count for deployment.
     """
+    if not samples:
+        raise ValueError("No completed training samples. Run `python3 fpl_assistant.py sync`; at least two gameweeks of histories are needed.")
+    if holdout_gws < 1 or test_gws < 0 or max_epochs < 1:
+        raise ValueError("Validation weeks and epochs must be positive; test weeks cannot be negative.")
     gws = sorted({s.gw for s in samples})
     latest = gws[-1]
-    split_gw = latest - holdout_gws  # train on gw <= split_gw, validate on gw > split_gw
-    train = [s for s in samples if s.gw <= split_gw]
-    val = [s for s in samples if s.gw > split_gw]
-    best_epochs = 25
+    # Count observed rounds, so postponed/blank weeks do not empty a split.
+    n_test = min(test_gws, max(0, len(gws) - holdout_gws - 1))
+    test_rounds = set(gws[-n_test:]) if n_test else set()
+    development_rounds = gws[:-n_test] if n_test else gws
+    n_val = min(holdout_gws, max(0, len(development_rounds) - 1))
+    val_rounds = set(development_rounds[-n_val:]) if n_val else set()
+    train = [s for s in samples if s.gw not in test_rounds | val_rounds]
+    val = [s for s in samples if s.gw in val_rounds]
+    test = [s for s in samples if s.gw in test_rounds]
+    best_epochs = min(25, max_epochs)
 
     metrics: Dict[str, Any] = {
         "version": MODEL_VERSION,
@@ -736,7 +759,10 @@ def train_with_time_holdout(
         "real_gw_samples": len(samples),
         "train_samples": len(train),
         "val_samples": len(val),
-        "holdout_gws": f"GW {split_gw + 1}-{latest}" if val else "none",
+        "holdout_gws": f"GW {min(val_rounds)}-{max(val_rounds)}" if val else "none",
+        "test_gws": f"GW {min(test_rounds)}-{max(test_rounds)}" if test else "none",
+        "test_samples": len(test),
+        "evaluation_protocol": "epochs selected on validation; later test weeks evaluated once; deployed weights refit on all samples",
         "targets": "actual FPL points and actual minutes (no synthetic targets)",
     }
     if train and val and len(val) >= 30:
@@ -753,17 +779,20 @@ def train_with_time_holdout(
         probe.train(train, epochs=max_epochs, seed=seed, verbose=False, on_epoch_end=_checkpoint)
         if best["params"] is not None:
             probe.params = best["params"]
-            best_epochs = max(5, int(best["epoch"]))
+            best_epochs = int(best["epoch"])
         ev_val = probe.evaluate(val)
         ev_train = probe.evaluate(train)
         metrics["holdout"] = ev_val
+        metrics["validation"] = ev_val
+        if test:
+            metrics["test"] = probe.evaluate(test)
         metrics["early_stopping"] = {
             "best_epoch": best_epochs,
             "curve": [(e, round(m, 3)) for e, m in curve if e % 5 == 0 or e == best_epochs],
         }
         metrics["train_fit"] = {k: ev_train[k] for k in ("mae_points", "corr_points") if k in ev_train}
         if verbose:
-            print(f"  early stopping: best epoch {best_epochs} (holdout MAE {best['mae']:.3f})")
+            print(f"  early stopping: best epoch {best_epochs} (validation MAE {best['mae']:.3f})")
         # Legacy keys read by the web page / CLI, now with honest meaning
         metrics["val_mae"] = ev_val["mae_points"]
         metrics["val_mae_naive_baseline"] = ev_val["mae_naive_baseline"]

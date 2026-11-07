@@ -82,6 +82,7 @@ def _serialize_squad_result(
     return {
         "title": title,
         "subtitle": subtitle,
+        "optimizationNotes": res.tactical_notes,
         "formation": res.formation,
         "totalCost": round(total_cost, 1),
         "budget": round(budget, 1),
@@ -439,7 +440,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="brand-mark">xP</div>
         <div>
           <h1>FPL AI Optimizer</h1>
-          <div class="sub" id="brand-sub">Multi-head model · exact MILP squads · walk-forward backtest</div>
+          <div class="sub" id="brand-sub">Multi-head model · squad optimization · walk-forward backtest</div>
         </div>
       </div>
       <div class="gw-chip"><span class="dot"></span><span id="gw-chip-text">Gameweek</span></div>
@@ -486,7 +487,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div id="plan-box"></div>
       </div>
       <div class="panel">
-        <h3>Model quality · holdout gameweeks</h3>
+        <h3>Model quality · chronological evaluation</h3>
         <div id="model-box"></div>
       </div>
       <div class="panel">
@@ -612,7 +613,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById("kpi-form-sub").textContent = `bench ${benchXp.toFixed(1)} xP`;
       document.getElementById("kpi-cost").textContent = `£${squad.totalCost.toFixed(1)}m`;
       document.getElementById("kpi-cost-sub").textContent = `of £${squad.budget.toFixed(1)}m · £${(squad.budget - squad.totalCost).toFixed(1)}m in bank`;
-      document.getElementById("verdict").innerHTML = `<p style="margin-bottom:8px;"><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p>`;
+      document.getElementById("verdict").innerHTML = `<p style="margin-bottom:8px;"><strong>${esc(squad.title.replace(/^Variation \d+: /, ""))}.</strong> ${esc(squad.subtitle)}</p><p>${esc(squad.coachVerdict)}</p><div class="caveat">${(squad.optimizationNotes || []).map(esc).join("<br>")}</div>`;
 
       const byPos = (pos) => starters.filter(p => p.pos === pos).map(p => createCardHtml(p)).join("");
       document.getElementById("row-gkp").innerHTML = byPos("GKP");
@@ -641,7 +642,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         dl = " · deadline " + d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       }
       document.getElementById("gw-chip-text").innerHTML = `<strong>Gameweek ${m.gw || "?"}</strong>${esc(dl)}`;
-      document.getElementById("brand-sub").textContent = `Model trained on real outcomes through GW ${m.trainedThroughGw || "?"} · squads are exact mixed-integer optima`;
+      document.getElementById("brand-sub").textContent = `Model trained on real outcomes through GW ${m.trainedThroughGw || "?"} · squads optimized within a candidate pool`;
     })();
 
     /* ---------- tooltip helpers ---------- */
@@ -682,20 +683,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     (function renderModel() {
       const m = DATA.nnMetrics || {};
-      const h = m.holdout || {};
+      const h = m.test || m.validation || m.holdout || {};
       const box = document.getElementById("model-box");
       if (!h.mae_points) { box.innerHTML = `<p>Run <code>python3 fpl_assistant.py train-nn</code> to populate.</p>`; return; }
       const top = Object.entries(m.feature_importance || {}).slice(0, 4).map(([k]) => k.replace(/_/g, " ")).join(", ");
       box.innerHTML = `
         <div class="summary-line"><span>Trained on</span><b>${m.real_gw_samples} player-weeks · GW ≤ ${m.latest_trained_gw}</b></div>
-        <div class="summary-line"><span>Scored on</span><b>${esc(m.holdout_gws || "")} (${h.n | 0} rows, unseen)</b></div>
+        <div class="summary-line"><span>${m.test ? "Test (excluded from epoch selection)" : "Validation (used for epoch selection)"}</span><b>${esc((m.test ? m.test_gws : m.holdout_gws) || "")} (${h.n | 0} rows)</b></div>
         <div class="metric-bars">
           ${pairBars("Points error (MAE, lower is better)", h.mae_points, h.mae_naive_baseline, true, f2)}
           ${pairBars("Correlation with actual points", h.corr_points, h.corr_naive_baseline, false, f2)}
           ${pairBars("Minutes log-loss (lower is better)", h.minutes_logloss, h.minutes_logloss_baseline, true, f2)}
           ${pairBars("Haul odds Brier (lower is better)", h.haul_brier, h.haul_brier_baseline, true, (x) => Number(x).toFixed(3))}
         </div>
-        <div class="caveat">Naive baseline: prior play-rate × points per appearance. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Strongest inputs: ${esc(top)}.</div>`;
+        <div class="caveat">Naive baseline: prior play-rate × points per appearance. Constant baselines are fitted on training rows only. Constant-mean MAE ${f2(h.mae_constant_baseline)}. Largest input-weight norms (not causal importance): ${esc(top)}.</div>`;
     })();
 
     /* ---------- backtest chart ---------- */
@@ -744,7 +745,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="summary-line"><span>Model vs naive, weekly rebuild</span><b>${signed(m2.mean)} ± ${f1(m2.sd)} · won ${m2.weeks_won}/${m2.weeks}</b></div>
           <div class="summary-line"><span>Player-level MAE · correlation</span><b>${f2(pl.model_mae)} vs ${f2(pl.naive_mae)} · ${f2(pl.model_corr)} vs ${f2(pl.naive_corr)}</b></div>
         </div>
-        <div class="caveat">Real points with auto-subs and captaincy. The rolling manager starts cold in GW 3 with two weeks of data, while humans built squads with full prior-season knowledge. One gameweek has a standard deviation of roughly 15 points.</div>`;
+        <div class="caveat">Real points with auto-subs and captaincy. Match logs are restricted to earlier weeks; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. Short backtests cannot establish a reliable edge.</div>`;
     })();
 
     document.getElementById("footer").textContent = "Expected points = P(60+ minutes) × points given a start + P(cameo) × cameo points. Availability uses the learned minutes model and official FPL flags; headlines are informational only.";

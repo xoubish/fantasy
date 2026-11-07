@@ -44,6 +44,7 @@ def evaluate_squad_with_ai_coach(
     players: List[PlayerRecord],
     articles: List[NewsArticle],
     use_gemini_if_available: bool = True,
+    save_snapshot: bool = True,
 ) -> Dict[int, CoachDecision]:
     """
     Produces a contextual `CoachDecision` for every active Premier League player by combining:
@@ -171,6 +172,8 @@ def evaluate_squad_with_ai_coach(
     if use_gemini_if_available and api_key:
         _refine_top_candidates_with_gemini(players, decisions, articles, api_key)
 
+    if not save_snapshot:
+        return decisions
     # Save decisions snapshot for transparency
     try:
         COACH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -200,7 +203,7 @@ def _refine_top_candidates_with_gemini(
     press conference headlines to `gemini-2.5-flash` to refine `tactical_xp_delta` and `coach_note`.
     """
     top_players = sorted(players, key=lambda x: x.total_points, reverse=True)[:25]
-    headlines = [f"- [{a.source}] {a.title}" for a in articles[:18]]
+    headlines = [f"- [{a.source}] {a.headline}" for a in articles[:18]]
     player_lines = [
         f"ID={p.id} | {p.web_name} ({p.team_short}, {p.position}, £{p.price}m) | "
         f"3GW={p.fixture_run_3gw} | PPG={p.points_per_game} | Form={p.form} | News={p.fpl_news or 'Healthy'}"

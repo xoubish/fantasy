@@ -62,6 +62,10 @@ class WeekPlan:
     free_transfers_before: int
     hits: int
     expected_points: float  # XI + captain for this week (before hits)
+    free_transfers_after: int = 0  # available at the following deadline
+    solver_status: str = ""
+    solver_gap: Optional[float] = None
+    candidate_count: int = 0
 
 
 @dataclass
@@ -71,6 +75,8 @@ class TransferPlan:
     total_hits: int
     solver_status: str
     notes: List[str] = field(default_factory=list)
+    solver_gap: Optional[float] = None
+    candidate_count: int = 0
 
 
 class _VarIndex:
@@ -82,8 +88,10 @@ class _VarIndex:
         self.block = n_players * n_weeks
         self.n_pt = len(self.kinds) * self.block
         self.f0 = self.n_pt  # f[t]
-        self.h0 = self.f0 + n_weeks  # h[t]
-        self.n = self.h0 + n_weeks
+        self.h0 = self.f0 + n_weeks + 1  # include terminal f[T]
+        self.hit_active0 = self.h0 + n_weeks
+        self.cap_active0 = self.hit_active0 + n_weeks
+        self.n = self.cap_active0 + n_weeks
 
     def pt(self, kind: str, p: int, t: int) -> int:
         return self.kinds.index(kind) * self.block + t * self.P + p
@@ -112,8 +120,14 @@ def _solve(
     time_limit: float,
     freeze_after_first: bool = False,
     transfer_friction: float = 0.0,
-) -> Tuple[Optional[np.ndarray], _VarIndex, str]:
+) -> Tuple[Optional[np.ndarray], _VarIndex, Dict[str, Any]]:
     P, T = len(players), len(gws)
+    if not P or not T:
+        raise ValueError("The optimizer needs players and at least one gameweek.")
+    if initial_squad is not None and not 0 <= free_transfers <= MAX_FREE_TRANSFERS:
+        raise ValueError("Free transfers must be between 0 and 5.")
+    if ft_end_value < 0:
+        raise ValueError("Terminal free-transfer value must be nonnegative.")
     V = _VarIndex(P, T)
     pid_to_idx = {pl.id: k for k, pl in enumerate(players)}
 
@@ -128,7 +142,7 @@ def _solve(
             cvec[V.pt("c", p, t)] -= w * xp
         if t not in unlimited_weeks:
             cvec[V.h(t)] += HIT_COST * w
-    cvec[V.f(T - 1)] -= ft_end_value  # value of carrying free transfers forward
+    cvec[V.f(T)] -= ft_end_value  # value AFTER the final week's transfers
     # Friction per transfer (free or paid): expected-point gains between two players are
     # noisy estimates, so a swap must clear a margin before it is worth making.
     for t in range(T):
@@ -213,14 +227,24 @@ def _solve(
                 add([(V.f(0), 1.0)], free_transfers, free_transfers)
             # h[t] >= n_in[t] - f[t]
             add([(V.h(t), 1.0), (V.f(t), 1.0)] + [(col, -1.0) for col, _ in n_in], 0, np.inf)
-        if t + 1 < T:
-            if t in unlimited_weeks or (initial_squad is None and t == 0):
-                # after a wildcard / free-hit style week you carry 1 free transfer
-                add([(V.f(t + 1), 1.0)], 1, 1)
-            else:
-                # f[t+1] <= f[t] - n_in[t] + h[t] + 1, and 1 <= f[t+1] <= 5
-                add([(V.f(t + 1), 1.0), (V.f(t), -1.0), (V.h(t), -1.0)] + [(col, 1.0) for col, _ in n_in], -np.inf, 1)
-                add([(V.f(t + 1), 1.0)], 1, MAX_FREE_TRANSFERS)
+        if initial_squad is None and t == 0:
+            add([(V.f(t + 1), 1.0)], 1, 1)
+        elif t in unlimited_weeks:
+            # Wildcards preserve the bank; no extra FT is earned that week.
+            add([(V.f(t + 1), 1.0), (V.f(t), -1.0)], 0, 0)
+        else:
+            # Exact accounting: h=max(0, transfers-f), f_next=min(5, f-transfers+h+1).
+            # Binary branches prevent inventing hits or silently discarding banked FTs.
+            big_m = 20.0
+            hit_active = V.hit_active0 + t
+            capped = V.cap_active0 + t
+            add([(V.h(t), 1.0), (hit_active, -big_m)], -np.inf, 0)
+            add([(V.h(t), 1.0), (V.f(t), 1.0), (hit_active, big_m)]
+                + [(col, -1.0) for col, _ in n_in], -np.inf, big_m)
+            balance = [(V.f(t + 1), 1.0), (V.f(t), -1.0), (V.h(t), -1.0)] + n_in
+            add(balance, -np.inf, 1)
+            add(balance + [(capped, big_m)], 1, np.inf)
+            add([(V.f(t + 1), 1.0), (capped, -big_m)], MAX_FREE_TRANSFERS - big_m, np.inf)
 
     # must include / exclude (all weeks)
     for pid in must_include:
@@ -239,8 +263,9 @@ def _solve(
     ub = np.ones(V.n)
     integrality = np.ones(V.n)
     for t in range(T):
-        ub[V.f(t)] = 15
+        ub[V.f(t)] = 15 if t == 0 and initial_squad is None else MAX_FREE_TRANSFERS
         ub[V.h(t)] = 15
+    ub[V.f(T)] = MAX_FREE_TRANSFERS
     bounds = Bounds(lb, ub)
 
     res = milp(
@@ -250,9 +275,10 @@ def _solve(
         bounds=bounds,
         options={"time_limit": time_limit, "disp": False, "mip_rel_gap": 1e-4},
     )
+    info = {"status": str(res.message), "gap": getattr(res, "mip_gap", None), "candidates": P}
     if res.x is None:
-        return None, V, str(res.message)
-    return np.round(res.x), V, str(res.message)
+        return None, V, info
+    return np.round(res.x), V, info
 
 
 def _bench_order(players: List[PlanPlayer], squad_ids: List[int], lineup_ids: List[int], gw: int) -> List[int]:
@@ -267,7 +293,7 @@ def _bench_order(players: List[PlanPlayer], squad_ids: List[int], lineup_ids: Li
 
 
 def _extract_plan(
-    x: np.ndarray, V: _VarIndex, players: List[PlanPlayer], gws: List[int], status: str
+    x: np.ndarray, V: _VarIndex, players: List[PlanPlayer], gws: List[int], status: Dict[str, Any]
 ) -> TransferPlan:
     weeks: List[WeekPlan] = []
     total_hits = 0
@@ -295,10 +321,15 @@ def _extract_plan(
                 free_transfers_before=int(x[V.f(t)]),
                 hits=hits,
                 expected_points=round(xi_xp, 2),
+                free_transfers_after=int(x[V.f(t + 1)]),
+                solver_status=status["status"],
+                solver_gap=status["gap"],
+                candidate_count=status["candidates"],
             )
         )
     objective = sum(w.expected_points for w in weeks) - HIT_COST * total_hits
-    return TransferPlan(weeks=weeks, objective=round(objective, 2), total_hits=total_hits, solver_status=status)
+    return TransferPlan(weeks=weeks, objective=round(objective, 2), total_hits=total_hits,
+                        solver_status=status["status"], solver_gap=status["gap"], candidate_count=status["candidates"])
 
 
 def solve_squad(

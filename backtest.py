@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Strict walk-forward backtester (backtest.py)
+Walk-forward backtester with current-snapshot metadata (backtest.py)
 
 For every completed gameweek T in the test range:
   1. Blind all data to gameweeks < T (match logs, prices, team strengths, availability).
@@ -28,7 +28,8 @@ import argparse
 import copy
 import json
 import statistics
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import replace
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -173,7 +174,8 @@ def fit_model_for_gw(blinded: List[PlayerRecord], target_gw: int) -> Tuple[FPLNe
         raise RuntimeError(f"No training rows before GW {target_gw}")
     latest = max(s.gw for s in samples)
     if latest >= 4:
-        net, _ = train_with_time_holdout(samples, holdout_gws=1)
+        # The outer target gameweek is the test; all earlier rows are development data.
+        net, _ = train_with_time_holdout(samples, holdout_gws=1, test_gws=0)
     else:
         net = FPLNeuralNetwork()
         net.train(samples, epochs=15)
@@ -197,10 +199,14 @@ def naive_plan_players(preds: List[PlayerPrediction], gws: List[int]) -> List[Pl
 def predict_all_for_gw(target_gw: int, use_coach: bool) -> Tuple[List[PlayerPrediction], Dict[str, Any], int]:
     blinded, ev_meta = build_blinded_players_for_gw(target_gw)
     net, n_rows = fit_model_for_gw(blinded, target_gw)
-    predictor._CACHED_NN = net
-    news_scraper.MINUTES_MODEL_OVERRIDE = net
-    predictor._CACHED_COACH = evaluate_squad_with_ai_coach(blinded, [], use_gemini_if_available=False) if use_coach else {}
-    preds = [predict_player(p, []) for p in blinded]
+    old_nn, old_coach, old_override = predictor._CACHED_NN, predictor._CACHED_COACH, news_scraper.MINUTES_MODEL_OVERRIDE
+    try:
+        predictor._CACHED_NN = net
+        news_scraper.MINUTES_MODEL_OVERRIDE = net
+        predictor._CACHED_COACH = evaluate_squad_with_ai_coach(blinded, [], use_gemini_if_available=False, save_snapshot=False) if use_coach else {}
+        preds = [predict_player(p, []) for p in blinded]
+    finally:
+        predictor._CACHED_NN, predictor._CACHED_COACH, news_scraper.MINUTES_MODEL_OVERRIDE = old_nn, old_coach, old_override
     return preds, ev_meta, n_rows
 
 
@@ -219,12 +225,24 @@ class RollingManager:
         self.bank = 0.0
         self.free_transfers = 1
         self.hits_total = 0
+        self.known_players: Dict[int, PlanPlayer] = {}
 
-    def step(self, plan_players: List[PlanPlayer], by_id: Dict[int, PlayerPrediction], gw: int) -> Tuple[List[int], List[int], int, int, int, float]:
+    def step(self, plan_players: List[PlanPlayer], by_id: Dict[int, PlayerPrediction], gw: int,
+             eligible_ids: Optional[Sequence[int]] = None) -> Tuple[List[int], List[int], int, int, int, float]:
         gws = [gw + k for k in range(self.horizon)]
-        price_of = {pl.id: pl.price for pl in plan_players}
+        self.known_players.update({pl.id: pl for pl in plan_players})
+        available = {pl.id: pl for pl in plan_players}
+        for pid in self.squad or []:
+            if pid not in available:
+                if pid not in self.known_players:
+                    raise ValueError(f"Missing price/position/club for owned player {pid}")
+                available[pid] = replace(self.known_players[pid], xp_by_gw={})
+        allowed = set(available) if eligible_ids is None else set(eligible_ids)
+        owned = set(self.squad or [])
+        candidates = [pl for pl in available.values() if pl.id in allowed or pl.id in owned]
+        price_of = {pid: pl.price for pid, pl in available.items()}
         if self.squad is None:
-            pool = select_candidate_pool(plan_players, gws)
+            pool = select_candidate_pool(candidates, gws)
             week = solve_squad(pool, gw, budget=100.0, horizon_weights={g: 0.85**k for k, g in enumerate(gws)})
             assert week is not None
             self.squad = list(week.squad_ids)
@@ -232,12 +250,8 @@ class RollingManager:
             hits = 0
             lineup, bench, cap, vice, xp = week.lineup_ids, week.bench_order, week.captain_id, week.vice_id, week.expected_points
         else:
-            # players who vanished from the pool keep their last price and 0 xP
-            known = {pl.id for pl in plan_players}
-            extra = [PlanPlayer(i, str(i), "???", by_id[i].player.position if i in by_id else "MID", 4.0, 4.0, {}, 0.0, 0.0)
-                     for i in self.squad if i not in known]
-            pool = select_candidate_pool(plan_players + extra, gws, keep_ids=self.squad)
-            budget = round(sum(price_of.get(i, 4.0) for i in self.squad) + self.bank, 1)
+            pool = select_candidate_pool(candidates, gws, keep_ids=self.squad)
+            budget = round(sum(price_of[i] for i in self.squad) + self.bank, 1)
             plan = plan_transfers(pool, self.squad, gws, budget=budget, free_transfers=self.free_transfers, time_limit=30.0,
                                   transfer_friction=self.friction)
             assert plan is not None
@@ -247,17 +261,18 @@ class RollingManager:
                 print(f"    [{self.label}] GW{gw} FT={self.free_transfers} bank={self.bank} OUT {[names.get(i, i) for i in w0.transfers_out]} "
                       f"IN {[names.get(i, i) for i in w0.transfers_in]} hits={w0.hits}")
             hits = w0.hits
-            n_in = len(w0.transfers_in)
             self.hits_total += hits
-            self.bank = round(budget - sum(price_of.get(i, 4.0) for i in w0.squad_ids), 1)
-            self.free_transfers = max(1, min(5, self.free_transfers - n_in + hits + 1))
+            self.bank = round(budget - sum(price_of[i] for i in w0.squad_ids), 1)
+            self.free_transfers = w0.free_transfers_after
             self.squad = list(w0.squad_ids)
             lineup, bench, cap, vice, xp = w0.lineup_ids, w0.bench_order, w0.captain_id, w0.vice_id, w0.expected_points
         return lineup, bench, cap, vice, hits, xp
 
 
 def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, friction: float = 1.5) -> Dict[str, Any]:
-    raw_by_id = {p.id: p for p in load_players()}
+    if not gws:
+        raise ValueError("Select at least one completed gameweek to backtest.")
+    raw_by_id = {p.id: p for p in load_players(target_gw=gws[0])}
     rolling_model = RollingManager("model_rolling", friction=friction, log=verbose)
     rolling_naive = RollingManager("naive_rolling", friction=friction, log=verbose)
     weeks: List[Dict[str, Any]] = []
@@ -270,6 +285,7 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
         pool_preds = [p for p in preds if predictor.is_selectable(p, 0.2)]
         model_pp = to_plan_players(pool_preds)
         naive_pp = naive_plan_players(pool_preds, [gw + k for k in range(HORIZON_GWS)])
+        eligible_ids = [p.player.id for p in pool_preds]
 
         # player-level accuracy on everyone with a fixture this week
         naive_xp_of = {pl.id: pl.xp_by_gw.get(gw, 0.0) for pl in naive_plan_players(preds, [gw])}
@@ -303,8 +319,9 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
                 row["model_freehit_subs"] = subs
 
         # Realistic rolling managers
-        for mgr, pp in ((rolling_model, model_pp), (rolling_naive, naive_pp)):
-            lineup, bench, cap, vice, hits, xp = mgr.step(pp, by_id, gw)
+        for mgr, pp in ((rolling_model, to_plan_players(preds)),
+                        (rolling_naive, naive_plan_players(preds, [gw + k for k in range(HORIZON_GWS)]))):
+            lineup, bench, cap, vice, hits, xp = mgr.step(pp, by_id, gw, eligible_ids=eligible_ids)
             pts, _ = score_week(lineup, bench, cap, vice, pos_of, raw_by_id, gw)
             row[mgr.label] = pts - 4 * hits
             row[mgr.label + "_hits"] = hits
@@ -326,6 +343,7 @@ def run_backtest(gws: List[int], use_coach: bool = True, verbose: bool = True, f
 
     arr = np.asarray(pred_rows) if pred_rows else np.zeros((0, 3))
     summary = {
+        "limitations": "Historical match logs are time-filtered; roster, club membership, fixture difficulty and set-piece roles use the current snapshot. This is not a fully point-in-time simulation.",
         "weeks_tested": gws,
         "use_coach": use_coach,
         "transfer_friction": friction,
@@ -353,7 +371,7 @@ def print_summary(res: Dict[str, Any]) -> None:
     s = res["summary"]
     weeks = res["weeks"]
     print("\n" + "=" * 96)
-    print("  WALK-FORWARD BACKTEST  (every number below is out-of-sample: trained on GW < T, scored on GW T)")
+    print("  WALK-FORWARD BACKTEST  (trained on GW < T, scored on GW T; current-snapshot metadata)")
     print("=" * 96)
     print(f"{'GW':>3} | {'model FH':>8} {'(pred)':>7} | {'naive FH':>8} | {'model roll':>10} {'hits':>4} | {'naive roll':>10} {'hits':>4} | {'FPL avg':>7} | {'MAE m/n':>11} | {'corr m/n':>11}")
     for w in weeks:
