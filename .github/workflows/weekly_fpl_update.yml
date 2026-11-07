@@ -23,17 +23,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Matplotlib for Pitch Figures
-        run: pip install matplotlib
+      - name: Install dependencies (numpy for the model, scipy for the MILP solver, Pillow for pitch figures)
+        run: pip install numpy scipy pillow
 
-      - name: Sync Last Week's FPL Match Logs, Retrain Time-Aware Neural Net & Rebuild index.html
+      - name: Sync last week's match logs, retrain the multi-head model & rebuild index.html
         run: python3 fpl_assistant.py weekly-update
+
+      - name: Refresh the walk-forward backtest shown on the page
+        run: python3 backtest.py --quiet && python3 web_app.py
 
       - name: Commit and Push Updated Predictions & Page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html data/nn_weights.json data/latest_report.md data/my_squad_pitch.png
+          git add index.html data/nn_weights.json data/latest_report.md data/my_squad_pitch.png data/backtest_results.json
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else

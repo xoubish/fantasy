@@ -1,52 +1,41 @@
 # FPL Weekly Data & News Prediction Report
 
 - **Recommended Formation:** `4-4-2`
-- **Captain (2x):** **Gabriel** (HUL (H)) — `16.1 xP`
-- **Vice-Captain:** **Palmer** (SUN (A)) — `6.2 xP`
-- **Projected Total Score:** **63.5 pts** *(Floor: 26 pts | Ceiling: 144 pts)*
+- **Captain (2x):** **Isak** (CRY (A)) — `13.0 xP`
+- **Vice-Captain:** **Gabriel** (HUL (H)) — `6.2 xP`
+- **Projected Total Score:** **56.3 pts** *(Floor: 24 pts | Ceiling: 134 pts)*
 
 ## 1. Optimal Starting XI
 
 | Pos | Player | Club | Fixture | 3Yr PPG | CS% | 2+GC% | Start% | Cameo% | News Risk | xP (Range) |
 | :--- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- | :---: |
-| **GKP** | **Verbruggen** | BHA | `BRE (H)` | 3.4 | 33% | 30% | 94% | 3% | `NONE` | **3.8** *(2–9)* |
-| **DEF** | **Virgil** | LIV | `CRY (A)` | 4.0 | 36% | 27% | 94% | 3% | `NONE` | **6.0** *(2–12)* |
-| **DEF** | **Dunk** | BHA | `BRE (H)` | 2.9 | 32% | 32% | 94% | 3% | `NONE` | **3.1** *(2–8)* |
-| **DEF** | **Gabriel** ★ **(C)** | ARS | `HUL (H)` | 5.3 | 57% | 10% | 94% | 3% | `NONE` | **16.1** *(6–32)* |
-| **DEF** | **Justin** | LEE | `TOT (H)` | 3.3 | 41% | 23% | 94% | 3% | `NONE` | **3.3** *(2–8)* |
-| **MID** | **Rice** | ARS | `HUL (H)` | 4.8 | 59% | 10% | 94% | 3% | `NONE` | **5.5** *(2–13)* |
-| **MID** | **Ødegaard** | ARS | `HUL (H)` | 5.0 | 59% | 10% | 94% | 3% | `NONE` | **5.2** *(2–13)* |
-| **MID** | **Palmer** **(V)** | CHE | `SUN (A)` | 6.5 | 28% | 36% | 94% | 3% | `NONE` | **6.2** *(2–14)* |
-| **MID** | **Groß** ★ | BHA | `BRE (H)` | 4.7 | 32% | 31% | 94% | 3% | `NONE` | **4.9** *(2–13)* |
-| **FWD** | **Thiago** | BRE | `BHA (A)` | 4.7 | 18% | 51% | 94% | 3% | `NONE` | **3.9** *(2–10)* |
-| **FWD** | **Isak** ★ | LIV | `CRY (A)` | 6.8 | 36% | 28% | 94% | 3% | `NONE` | **5.2** *(2–12)* |
+| **GKP** | **Verbruggen** | BHA | `BRE (H)` | 3.4 | 34% | 30% | 98% | 0% | `NONE` | **4.4** *(2–9)* |
+| **DEF** | **Virgil** | LIV | `CRY (A)` | 4.0 | 34% | 28% | 81% | 12% | `NONE` | **5.3** *(2–11)* |
+| **DEF** | **Dunk** | BHA | `BRE (H)` | 2.9 | 33% | 31% | 91% | 2% | `NONE` | **3.1** *(2–7)* |
+| **DEF** | **Gabriel** ★ **(V)** | ARS | `HUL (H)` | 5.3 | 57% | 10% | 90% | 7% | `NONE` | **6.2** *(2–12)* |
+| **DEF** | **Justin** | LEE | `TOT (H)` | 3.3 | 41% | 22% | 77% | 11% | `NONE` | **3.2** *(2–8)* |
+| **MID** | **Rice** | ARS | `HUL (H)` | 4.8 | 59% | 10% | 92% | 6% | `NONE` | **5.5** *(2–12)* |
+| **MID** | **Ødegaard** | ARS | `HUL (H)` | 5.0 | 59% | 10% | 83% | 11% | `NONE` | **4.6** *(2–11)* |
+| **MID** | **Palmer** | CHE | `SUN (A)` | 6.5 | 26% | 39% | 89% | 4% | `NONE` | **4.1** *(2–11)* |
+| **MID** | **Groß** ★ | BHA | `BRE (H)` | 4.7 | 33% | 30% | 77% | 15% | `NONE` | **2.8** *(2–9)* |
+| **FWD** | **Thiago** | BRE | `BHA (A)` | 4.7 | 18% | 51% | 86% | 4% | `NONE` | **3.6** *(2–10)* |
+| **FWD** | **Isak** ★ **(C)** | LIV | `CRY (A)` | 6.8 | 33% | 30% | 92% | 2% | `NONE` | **13.0** *(4–34)* |
 
 ## 2. Recommended Bench Order
 
 | Slot | Pos | Player | Club | Fixture | Start% | Cameo% | News / Press Conference Status | xP |
 | :--- | :--- | :--- | :--- | :--- | :---: | :---: | :--- | :---: |
-| **GKP** | GKP | **Wilson** | COV | `EVE (A)` | 5% | 10% | Backup squad player (0 mins played this season). | **0.2** |
-| **1. Sub** | MID | **M.Sangaré** | BRE | `BHA (A)` | 80% | 10% | Regular starter with no negative press conference or injury flags. | **2.8** |
-| **2. Sub** | DEF | **O'Reilly** | MCI | `NFO (A)` | 20% | 55% | Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches — high risk of a 1-point bench cameo! | **1.6** |
-| **3. Sub** | FWD | **João Pedro** | CHE | `SUN (A)` | 0% | 0% | Ruled out (0% chance of playing) due to injury/suspension flag. | **0.0** |
+| **GKP** | GKP | **Wilson** | COV | `EVE (A)` | 9% | 19% | Minutes model: 9% to play 60+, 19% cameo. | **0.5** |
+| **1. Sub** | MID | **M.Sangaré** | BRE | `BHA (A)` | 79% | 12% | Minutes model: 79% to play 60+, 12% cameo. | **2.6** |
+| **2. Sub** | DEF | **O'Reilly** | MCI | `NFO (A)` | 25% | 48% | Your note flags rest/rotation (cameo trap); Minutes model: 29% to play 60+, 48% cameo. | **1.6** |
+| **3. Sub** | FWD | **João Pedro** | CHE | `SUN (A)` | 0% | 0% | Ruled out by the official FPL injury/suspension flag. | **0.0** |
 
 ## 3. News & Tactical Alerts
 
-- Cameo Trap Alert (O'Reilly - BENCHED): Manager/press quotes indicate player is not 100% or needs rest and is unlikely to start consecutive matches — high risk of a 1-point bench cameo!
-- Unavailable (João Pedro): Buried in 3rd bench slot (0% start probability).
-- Fixture Hedge (Thiago vs BHA defense): Starting Thiago alongside your BHA defensive assets hedges your floor so you still get points if BHA concede.
-- **Rice News:** [BBC Sport Premier League] Has Anderson lived up to the hype after Man City move?
-- **Rice News:** [The Guardian Premier League] Premier League news: Arteta insists Rice isn’t playing too many games
-- **Rice News:** [The Guardian Premier League] ‘We had to dig in’: Arsenal’s Anfield win was performance of champions, says Rice
-- **Rice News:** [The Guardian Premier League] Premier League today: How to watch, TV channels & live stream
-- **Groß News:** [BBC Sport Premier League] Liverpool earn first league win at Anfield with victory over Brighton
+- Cameo risk (Wilson - BENCHED): Minutes model: 9% to play 60+, 19% cameo.
+- Cameo risk (O'Reilly - BENCHED): Your note flags rest/rotation (cameo trap); Minutes model: 29% to play 60+, 48% cameo.
+- Unavailable (João Pedro): Ruled out by the official FPL injury/suspension flag.
 - **Thiago News:** [BBC Sport Premier League] Thiago on target as Brentford beat Forest
-- **Isak News:** [BBC Sport Premier League] Liverpool earn first league win at Anfield with victory over Brighton
-- **Isak News:** [The Guardian Premier League] Andy Madley and VAR should take credit – they got major Anfield calls right | Chris Foy
-- **Isak News:** [The Guardian Premier League] ‘We had to dig in’: Arsenal’s Anfield win was performance of champions, says Rice
-- **Isak News:** [The Guardian Premier League] Premier League: 10 talking points from the weekend’s action
-- **Isak News:** [The Guardian Premier League] ‘We have to tell them to go down’: Iraola responds to Isak penalty denial for Liverpool
-- **Isak News:** [The Guardian Premier League] Liverpool 0-1 Arsenal: Premier League – as it happened
 - **Wilson News:** [The Guardian Premier League] Arsenal have everything they need to repeat as Premier League champions | Jonathan Wilson
 - **O'Reilly News:** [Manchester Evening News / Enzo Maresca Press Conference] Nico O'Reilly not 100 percent and needs rest over international break
 - **João Pedro News:** [FPL Official] Thigh injury - Unknown return date
@@ -58,24 +47,35 @@
 
 | Out | In | Club & Fixture | Cost Diff | Starting XI Gain | Hit-Adjusted Gain |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| Dunk (£4.5m) | **Van Hecke** (£5.0m) | TOT `LEE (A)` | +0.5m | **+4.2 xP** | `+0.2 xP` |
-| O'Reilly (£6.2m) | **Van Hecke** (£5.0m) | TOT `LEE (A)` | -1.2m | **+4.1 xP** | `+0.1 xP` |
-| Justin (£4.5m) | **Van Hecke** (£5.0m) | TOT `LEE (A)` | +0.5m | **+4.0 xP** | `+0.0 xP` |
-| Dunk (£4.5m) | **Fofana** (£5.0m) | CHE `SUN (A)` | +0.5m | **+2.8 xP** | `-1.2 xP` |
-| O'Reilly (£6.2m) | **Fofana** (£5.0m) | CHE `SUN (A)` | -1.2m | **+2.7 xP** | `-1.3 xP` |
+| O'Reilly (£6.2m) | **Hill** (£5.6m) | BOU `IPS (A)` | -0.6m | **+3.5 xP** | `-0.5 xP` |
+| João Pedro (£7.7m) | **Evanilson** (£6.5m) | BOU `IPS (A)` | -1.2m | **+3.0 xP** | `-1.0 xP` |
+| O'Reilly (£6.2m) | **Silva** (£5.1m) | BOU `IPS (A)` | -1.1m | **+2.5 xP** | `-1.5 xP` |
+| O'Reilly (£6.2m) | **Van Hecke** (£5.0m) | TOT `LEE (A)` | -1.2m | **+2.5 xP** | `-1.5 xP` |
+| Dunk (£4.5m) | **Van Hecke** (£5.0m) | TOT `LEE (A)` | +0.5m | **+2.2 xP** | `-1.8 xP` |
 
-## 5. Unlimited Free Hit / Dream XI Comparison (`5-3-2` — 77.7 xP)
+## 4b. Multi-Gameweek Transfer Plan (exact MILP, FT banked to 5, -4 per extra transfer)
+
+| GW | Free transfers | Out | In | Hit | Captain | XI xP |
+| :---: | :---: | :--- | :--- | :---: | :--- | :---: |
+| 10 | 0 | O'Reilly | **Van Hecke** (£5.0m) | -4 | Isak | 58.1 |
+| 11 | 1 | João Pedro | **N.Jackson** (£7.0m) | 0 | Isak | 59.9 |
+| 12 | 1 | — | — | 0 | N.Jackson | 56.8 |
+| 13 | 2 | Groß, Justin | **Fofana** (£5.0m), **Barcola** (£8.1m) | 0 | Isak | 60.6 |
+
+> Plan value (xP minus hits over 4 GWs): **231.3** | hits taken: 1. Selling prices are assumed equal to current prices.
+
+## 5. Unlimited Free Hit / Dream XI Comparison (`5-2-3` — 71.7 xP)
 
 | Pos | Player | Club | Price | Fixture | 3Yr PPG | xP |
 | :--- | :--- | :--- | :---: | :--- | :---: | :---: |
-| **GKP** | **A.Becker** | LIV | £5.5m | `CRY (A)` | 3.8 | **5.2** |
-| **DEF** | **Gabriel** **(C)** | ARS | £8.1m | `HUL (H)` | 5.3 | **16.1** |
-| **DEF** | **Van Hecke** **(V)** | TOT | £5.0m | `LEE (A)` | 3.4 | **7.3** |
-| **DEF** | **Konsa** | ARS | £4.8m | `HUL (H)` | 3.2 | **6.7** |
-| **DEF** | **Virgil** | LIV | £6.4m | `CRY (A)` | 4.0 | **6.0** |
-| **DEF** | **Jacquet** | LIV | £5.1m | `CRY (A)` | 4.7 | **5.7** |
-| **MID** | **Palmer** | CHE | £9.8m | `SUN (A)` | 6.5 | **6.2** |
-| **MID** | **Neto** | CHE | £6.6m | `SUN (A)` | 4.5 | **6.0** |
-| **MID** | **Rogers** | CHE | £8.2m | `SUN (A)` | 4.8 | **5.7** |
-| **FWD** | **Haaland** | MCI | £15.8m | `NFO (A)` | 7.0 | **7.2** |
-| **FWD** | **Kostoulas** | BHA | £5.8m | `BRE (H)` | 7.2 | **5.7** |
+| **GKP** | **Raya** | ARS | £6.2m | `HUL (H)` | 4.2 | **5.9** |
+| **DEF** | **Hill** | BOU | £5.6m | `IPS (A)` | 4.5 | **6.2** |
+| **DEF** | **Gabriel** | ARS | £8.1m | `HUL (H)` | 5.3 | **6.2** |
+| **DEF** | **Virgil** | LIV | £6.4m | `CRY (A)` | 4.0 | **5.3** |
+| **DEF** | **Silva** | BOU | £5.1m | `IPS (A)` | 3.8 | **5.3** |
+| **DEF** | **Van Hecke** | TOT | £5.0m | `LEE (A)` | 3.4 | **5.2** |
+| **MID** | **Rice** | ARS | £7.5m | `HUL (H)` | 4.8 | **5.5** |
+| **MID** | **Barcola** | LIV | £8.1m | `CRY (A)` | 3.5 | **5.0** |
+| **FWD** | **Haaland** **(C)** | MCI | £15.8m | `NFO (A)` | 7.0 | **14.3** |
+| **FWD** | **Isak** **(V)** | LIV | £9.2m | `CRY (A)` | 6.8 | **6.5** |
+| **FWD** | **Evanilson** | BOU | £6.5m | `IPS (A)` | 4.6 | **5.8** |

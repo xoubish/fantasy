@@ -8,10 +8,10 @@ Fetches recent Premier League / FPL team news from:
 - Sky Sports Football (https://www.skysports.com/football/news)
 - Local custom press conference quotes in `my_squad.json` / `data/news_cache.json`
 
-Analyzes press conference quotes for FPL-critical signals:
-- Rotation / rest / cameo warnings ("not 100 percent", "needs rest", "failed to start consecutive")
-- Injury / suspension flags ("ruled out", "injured", "hamstring", "suspended")
-- Positive fitness boosts ("back in training", "100 percent fit", "will start")
+Availability (minutes) is estimated by the learned minutes model in `neural_model.py`
+plus the OFFICIAL FPL flags. Keyword phrases below are applied ONLY to notes you add
+yourself in `my_squad.json` (tagged to a player); scraped headlines are shown for
+information and never move the probabilities.
 """
 
 from __future__ import annotations
@@ -24,11 +24,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fpl_data import DATA_DIR, USER_AGENT, PlayerRecord
 
 NEWS_CACHE_PATH = DATA_DIR / "news_cache.json"
+
+# Backtests inject a model trained only on past gameweeks here so availability never
+# uses weights that have seen the week being tested.
+MINUTES_MODEL_OVERRIDE = None
 
 NEWS_SOURCES = [
     {
@@ -249,40 +253,43 @@ def _normalize(text: str) -> str:
 
 
 def analyze_player_news(
-    player: PlayerRecord, articles: List[NewsArticle]
+    player: PlayerRecord,
+    articles: List[NewsArticle],
+    minutes_probs: Optional[Tuple[float, float]] = None,
 ) -> PlayerNewsAssessment:
     """
-    Evaluates official FPL news + scraped Sporting Life / BBC / press conference quotes
-    for a specific player and returns starting vs cameo probabilities.
+    Availability assessment = learned minutes model + OFFICIAL FPL flags + user-curated notes.
+
+      * `minutes_probs` = (P(60+ minutes), P(1-59 minutes)) from the neural minutes head.
+        When not supplied it is computed here from the cached model.
+      * Official FPL status / chance_of_playing_next_round overrides the model.
+      * Custom notes in `my_squad.json` that are explicitly tagged with this player's name
+        are honoured (rest / out / confirmed-start phrases).
+      * Scraped headlines are matched by name for DISPLAY ONLY. They never change the
+        probabilities: loose keyword matching on headlines proved to be noise.
     """
     p_web = _normalize(player.web_name)
-    p_last = _normalize(player.full_name.split()[-1])
 
     matched_headlines: List[str] = []
     matched_quotes: List[str] = []
-    combined_texts: List[str] = []
+    curated_texts: List[str] = []
 
-    # 1. Check Official FPL status & news string
     if player.fpl_news:
         matched_headlines.append(f"[FPL Official] {player.fpl_news}")
-        combined_texts.append(player.fpl_news)
 
-    # 2. Match against scraped articles and manager quotes
     for art in articles:
-        norm_blob = _normalize(f"{art.headline} {art.text}")
-        tagged = art.player_tag and _normalize(art.player_tag) == p_web
-        name_in_text = (len(p_web) >= 4 and p_web in norm_blob) or (
-            len(p_last) >= 5 and p_last in norm_blob
-        )
-        if tagged or name_in_text:
+        tagged = bool(art.player_tag) and _normalize(art.player_tag) == p_web
+        if tagged:
             matched_headlines.append(f"[{art.source}] {art.headline}")
             if art.text:
                 matched_quotes.append(art.text)
-            combined_texts.append(f"{art.headline}. {art.text}")
+            curated_texts.append(f"{art.headline}. {art.text}")
+            continue
+        # informational name match on the headline only (full web_name, >= 5 chars)
+        if len(p_web) >= 5 and p_web in _normalize(art.headline):
+            matched_headlines.append(f"[{art.source}] {art.headline}")
 
-    full_blob = _normalize(" ".join(combined_texts))
-
-    # 3. Determine Base Start & Cameo Probabilities
+    # 1. Hard official flags
     if player.status in ("i", "s", "u") or player.chance_of_playing_next_round == 0:
         return PlayerNewsAssessment(
             player_name=player.web_name,
@@ -291,96 +298,67 @@ def analyze_player_news(
             cameo_probability=0.0,
             matched_headlines=matched_headlines,
             matched_quotes=matched_quotes,
-            reasoning="Ruled out (0% chance of playing) due to injury/suspension flag.",
+            reasoning="Ruled out by the official FPL injury/suspension flag.",
         )
 
-    # Check for rotation / rest / not 100% quotes (like Maresca on O'Reilly)
-    cameo_hits = [
-        pat for pat in CAMEO_ROTATION_PATTERNS if re.search(pat, full_blob)
-    ]
-    out_hits = [pat for pat in OUT_INJURED_PATTERNS if re.search(pat, full_blob)]
+    # 2. Learned minutes model
+    if minutes_probs is None:
+        try:
+            from neural_model import extract_features, get_or_train_neural_net
 
-    if cameo_hits:
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="CAMEO_ROTATION_RISK",
-            start_probability=0.20,
-            cameo_probability=0.55,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning=(
-                "Manager/press quotes indicate player is not 100% or needs rest and is unlikely "
-                "to start consecutive matches — high risk of a 1-point bench cameo!"
-            ),
-        )
+            net = MINUTES_MODEL_OVERRIDE or get_or_train_neural_net()
+            full = net.predict_full(extract_features(player))
+            minutes_probs = (full["p_full"], full["p_cameo"])
+        except Exception:
+            rate = min(1.0, player.minutes / max(90.0 * max(1, len(player.gw_history)), 90.0))
+            minutes_probs = (0.9 * rate, 0.1)
+    p_full, p_cameo = float(minutes_probs[0]), float(minutes_probs[1])
+    p_full = max(0.0, min(1.0, p_full))
+    p_cameo = max(0.0, min(1.0 - p_full, p_cameo))
+    reason = f"Minutes model: {int(p_full * 100)}% to play 60+, {int(p_cameo * 100)}% cameo."
 
-    if out_hits and not cameo_hits:
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="INJURED_OR_OUT",
-            start_probability=0.05,
-            cameo_probability=0.10,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning="News reports suggest player is ruled out or unavailable.",
-        )
+    # 3. Official doubt flags scale the model
+    chance = player.chance_of_playing_next_round
+    if chance is not None and chance < 100:
+        c = chance / 100.0
+        p_cameo = min(1.0 - p_full * c, p_cameo * c + p_full * (1.0 - c) * 0.35)
+        p_full = p_full * c
+        reason = f"FPL flags {chance}% chance of playing; " + reason
+    elif player.status == "d":
+        p_cameo = min(1.0 - p_full * 0.5, p_cameo + p_full * 0.2)
+        p_full *= 0.5
+        reason = "FPL marks player doubtful; " + reason
 
-    if (
-        player.chance_of_playing_next_round is not None
-        and player.chance_of_playing_next_round < 100
-    ):
-        prob = (player.chance_of_playing_next_round / 100.0) * 0.7
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="CAMEO_ROTATION_RISK",
-            start_probability=round(prob, 2),
-            cameo_probability=0.35,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning=f"FPL flags player at {player.chance_of_playing_next_round}% chance of playing.",
-        )
+    # 4. User-curated notes explicitly tagged to this player
+    blob = _normalize(" ".join(curated_texts))
+    if blob:
+        if any(re.search(pat, blob) for pat in OUT_INJURED_PATTERNS):
+            p_full, p_cameo = min(p_full, 0.05), min(1.0 - 0.05, max(p_cameo, 0.10))
+            reason = "Your note says the player is out; " + reason
+        elif any(re.search(pat, blob) for pat in CAMEO_ROTATION_PATTERNS):
+            p_full, p_cameo = min(p_full, 0.25), max(p_cameo, 0.45)
+            reason = "Your note flags rest/rotation (cameo trap); " + reason
+        elif any(re.search(pat, blob) for pat in POSITIVE_STARTER_PATTERNS):
+            p_full = max(p_full, 0.90)
+            p_cameo = min(p_cameo, 1.0 - p_full)
+            reason = "Your note confirms a start; " + reason
 
-    pos_hits = [pat for pat in POSITIVE_STARTER_PATTERNS if re.search(pat, full_blob)]
-    if pos_hits:
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="POSITIVE",
-            start_probability=0.95,
-            cameo_probability=0.03,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning="Positive fitness/starting confirmation in team news.",
-        )
+    p_play = p_full + p_cameo
+    if p_play < 0.15:
+        risk = "BACKUP_LOW_MINS"
+    elif p_full >= 0.72:
+        risk = "NONE"
+    elif p_full >= 0.45:
+        risk = "ROTATION_RISK"
+    else:
+        risk = "CAMEO_ROTATION_RISK"
 
-    # Default healthy player: scale start probability by actual season minutes/starts
-    if player.minutes < 90:
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="BACKUP_LOW_MINS",
-            start_probability=0.05,
-            cameo_probability=0.10,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning=f"Backup squad player ({player.minutes} mins played this season).",
-        )
-    if player.minutes < 360:
-        return PlayerNewsAssessment(
-            player_name=player.web_name,
-            risk_level="ROTATION_RISK",
-            start_probability=0.45,
-            cameo_probability=0.30,
-            matched_headlines=matched_headlines,
-            matched_quotes=matched_quotes,
-            reasoning=f"Rotation player ({player.minutes} mins played across {player.starts} starts).",
-        )
-
-    base_start = 0.94 if player.minutes >= 630 else 0.80
     return PlayerNewsAssessment(
         player_name=player.web_name,
-        risk_level="NONE",
-        start_probability=base_start,
-        cameo_probability=round((1.0 - base_start) * 0.5, 2),
+        risk_level=risk,
+        start_probability=round(p_full, 3),
+        cameo_probability=round(p_cameo, 3),
         matched_headlines=matched_headlines,
         matched_quotes=matched_quotes,
-        reasoning="Regular starter with no negative press conference or injury flags.",
+        reasoning=reason,
     )

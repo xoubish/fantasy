@@ -3,9 +3,13 @@
 FPL AI Helper & Prediction Pipeline (fpl_assistant.py)
 
 Usage:
-  python3 fpl_assistant.py analyze          # Analyze your 15-man squad + news + 3yr stats
-  python3 fpl_assistant.py dream-team       # Build the optimal Free Hit XI from scratch
-  python3 fpl_assistant.py sync             # Sync live FPL API + 3yr history + Sporting Life / BBC news
+  python3 fpl_assistant.py analyze          # Analyze your 15-man squad + multi-week transfer plan
+  python3 fpl_assistant.py plan             # Multi-gameweek MILP transfer plan for my_squad.json
+  python3 fpl_assistant.py best-squad       # Exact best £100m squad (MILP) for this gameweek
+  python3 fpl_assistant.py dream-team       # Optimal Free Hit XI from scratch
+  python3 fpl_assistant.py sync             # Sync live FPL API + match logs + news
+  python3 fpl_assistant.py train-nn         # Retrain the multi-head model (time-ordered holdout report)
+  python3 backtest.py                       # Walk-forward backtest vs naive baseline and FPL average
   python3 fpl_assistant.py add-news "Player" "Headline" "Manager quote or article snippet"
 """
 
@@ -14,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fpl_data import DATA_DIR, PlayerRecord, load_players, sync_live_fpl_data
 from neural_model import get_or_train_neural_net
@@ -23,8 +27,10 @@ from pitch_renderer import render_pitch_figure
 from predictor import (
     OptimizedSquadResult,
     PlayerPrediction,
+    TransferPlanView,
     TransferSuggestion,
     build_dream_xi,
+    build_transfer_plan,
     get_best_squad_of_the_week,
     optimize_starting_xi,
     predict_player,
@@ -78,6 +84,7 @@ def format_markdown_report(
     transfers: List[TransferSuggestion],
     free_transfers: int,
     bank_millions: float,
+    plan_view: Optional[TransferPlanView] = None,
 ) -> str:
     lines: List[str] = []
     lines.append("# FPL Weekly Data & News Prediction Report\n")
@@ -178,6 +185,27 @@ def format_markdown_report(
                 f"| `{net_after_hit:+.1f} xP` |"
             )
 
+    if plan_view is not None:
+        lines.append(
+            f"\n## 4b. Multi-Gameweek Transfer Plan (exact MILP, FT banked to 5, -4 per extra transfer)\n"
+        )
+        lines.append("| GW | Free transfers | Out | In | Hit | Captain | XI xP |")
+        lines.append("| :---: | :---: | :--- | :--- | :---: | :--- | :---: |")
+        for w in plan_view.plan.weeks:
+            outs = ", ".join(plan_view.by_id[i].player.web_name for i in w.transfers_out) or "—"
+            ins = ", ".join(
+                f"**{plan_view.by_id[i].player.web_name}** (£{plan_view.by_id[i].player.price:.1f}m)"
+                for i in w.transfers_in
+            ) or "—"
+            lines.append(
+                f"| {w.gw} | {w.free_transfers_before} | {outs} | {ins} | {('-' + str(4 * w.hits)) if w.hits else '0'} "
+                f"| {plan_view.by_id[w.captain_id].player.web_name} | {w.expected_points:.1f} |"
+            )
+        lines.append(
+            f"\n> Plan value (xP minus hits over {len(plan_view.plan.weeks)} GWs): **{plan_view.plan.objective:.1f}** | "
+            f"hits taken: {plan_view.plan.total_hits}. Selling prices are assumed equal to current prices."
+        )
+
     lines.append(
         f"\n## 5. Unlimited Free Hit / Dream XI Comparison (`{dream_result.formation}` — {dream_result.total_expected_points:.1f} xP)\n"
     )
@@ -236,9 +264,14 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     transfers = recommend_single_transfers(
         squad_preds, all_preds, bank_millions=bank_millions
     )
+    plan_view = None
+    if len(squad_preds) == 15:
+        plan_view = build_transfer_plan(
+            squad_preds, all_preds, bank_millions, free_transfers, horizon=4
+        )
 
     report_md = format_markdown_report(
-        opt_squad, dream_xi, squad_preds, transfers, free_transfers, bank_millions
+        opt_squad, dream_xi, squad_preds, transfers, free_transfers, bank_millions, plan_view
     )
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(report_md, encoding="utf-8")
@@ -344,6 +377,36 @@ def cmd_best_squad(args: argparse.Namespace) -> None:
     print(f"\n[Saved formation figure to {best_pitch_path}]")
 
 
+def cmd_plan(args: argparse.Namespace) -> None:
+    """Multi-gameweek transfer plan for the squad in my_squad.json (exact MILP)."""
+    all_players = load_players()
+    articles = load_all_news(SQUAD_CONFIG_PATH)
+    squad_cfg = json.loads(SQUAD_CONFIG_PATH.read_text(encoding="utf-8"))
+    squad_players = _match_squad_players(all_players, squad_cfg)
+    if len(squad_players) != 15:
+        raise SystemExit(f"my_squad.json matched {len(squad_players)} players, need 15")
+    all_preds = [predict_player(p, articles) for p in all_players]
+    by_id = {p.player.id: p for p in all_preds}
+    squad_preds = [by_id[p.id] for p in squad_players]
+    free_transfers = int(squad_cfg.get("free_transfers", 1))
+    bank = float(squad_cfg.get("bank_millions", 0.0))
+    view = build_transfer_plan(
+        squad_preds, all_preds, bank, free_transfers, horizon=args.horizon, wildcard_now=args.wildcard
+    )
+    if view is None:
+        raise SystemExit("Transfer plan infeasible (check budget / club limits in my_squad.json)")
+    print(f"# Transfer plan from GW {view.target_gw} ({args.horizon} gameweeks, FT={free_transfers}, bank £{bank:.1f}m)\n")
+    for line in view.describe():
+        print("- " + line)
+    w0 = view.plan.weeks[0]
+    print("\nThis week's XI:")
+    for pid in w0.lineup_ids:
+        p = view.by_id[pid]
+        tag = " (C)" if pid == w0.captain_id else (" (V)" if pid == w0.vice_id else "")
+        print(f"  {p.player.position} {p.player.web_name}{tag} {p.player.team_short} {p.player.next_opponent} xP {p.expected_points:.1f}")
+    print("Bench order: " + ", ".join(view.by_id[i].player.web_name for i in w0.bench_order))
+
+
 def cmd_add_news(args: argparse.Namespace) -> None:
     cfg = json.loads(SQUAD_CONFIG_PATH.read_text(encoding="utf-8"))
     cfg.setdefault("custom_news", []).append(
@@ -358,9 +421,23 @@ def cmd_add_news(args: argparse.Namespace) -> None:
     print(f"Added press conference / news note for {args.player} to {SQUAD_CONFIG_PATH.name}!")
 
 
+def _print_model_metrics(net) -> None:
+    m = net.metrics
+    h = m.get("holdout", {})
+    print(
+        f"    {m.get('architecture')} | {m.get('real_gw_samples')} player-gameweek rows through GW {m.get('latest_trained_gw')}\n"
+        f"    Holdout {m.get('holdout_gws')}: MAE vs actual points {h.get('mae_points')} "
+        f"(naive baseline {h.get('mae_naive_baseline')}, constant {h.get('mae_constant_baseline')}) | "
+        f"corr {h.get('corr_points')} (naive {h.get('corr_naive_baseline')})\n"
+        f"    Minutes log-loss {h.get('minutes_logloss')} (base rate {h.get('minutes_logloss_baseline')}) | "
+        f"haul Brier {h.get('haul_brier')} (base rate {h.get('haul_brier_baseline')})"
+    )
+
+
 def cmd_train_nn(args: argparse.Namespace) -> None:
-    print("Training Time-Aware Supervised FPL Neural Network (22 -> 36 -> 18 -> 1) on Real 2026/27 PL Match Logs...")
-    net = get_or_train_neural_net(force_retrain=True)
+    print("Training multi-head FPL model (minutes | points given 60+ | haul) on real gameweek outcomes...")
+    net = get_or_train_neural_net(force_retrain=True, verbose=True)
+    _print_model_metrics(net)
     print(json.dumps(net.metrics, indent=2))
 
 
@@ -369,8 +446,8 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     End-to-end weekly pipeline:
       1. Syncs live FPL API + appends newly finished GW match logs (`element-summary`)
       2. Scrapes latest Premier League injury & press conference news
-      3. Retrains the 22-feature Dual-Head time-decayed neural network (xP + Haul Ceiling)
-      4. Runs the AI Tactical Head Coach (3-GW horizon + role classification) & rebuilds `index.html`
+      3. Retrains the multi-head model (minutes | points | haul) with a time-ordered holdout
+      4. Runs the AI Tactical Coach, the MILP squad/transfer optimizer & rebuilds `index.html`
       5. Optionally commits & pushes to GitHub Pages (`--push`)
     """
     import subprocess
@@ -387,13 +464,9 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     news_status = scrape_sports_websites()
     print(f"    Articles fetched: {news_status['articles_fetched']}")
 
-    print("=== Step 3/4: Retraining Dual-Head Time-Aware Neural Network (xP + Haul Ceiling) ===")
+    print("=== Step 3/4: Retraining multi-head model (time-ordered holdout) ===")
     net = get_or_train_neural_net(force_retrain=True)
-    print(
-        f"    Trained on {net.metrics.get('real_gw_samples')} match logs "
-        f"(up to GW {net.metrics.get('latest_trained_gw')}) | Val MAE: {net.metrics.get('val_mae')} | "
-        f"Haul Brier: {net.metrics.get('haul_val_brier')}"
-    )
+    _print_model_metrics(net)
 
     print("=== Step 4/4: Running AI Tactical Head Coach & Rebuilding Web App (index.html) ===")
     from web_app import build_static_html
@@ -422,7 +495,7 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
                 "git",
                 "commit",
                 "-m",
-                f"Weekly FPL AI Update for GW {gw_num} (3-GW horizon + Dual-Head NN + AI Coach)",
+                f"Weekly FPL AI Update for GW {gw_num} (multi-head model + MILP planner)",
             ],
             check=False,
         )
@@ -441,7 +514,7 @@ def main() -> None:
 
     p_wk = sub.add_parser(
         "weekly-update",
-        help="Full weekly refresh: pull last week's GW data, retrain Dual-Head NN, run AI Coach, and rebuild index.html",
+        help="Full weekly refresh: pull last week's GW data, retrain the model, run the AI Coach, and rebuild index.html",
     )
     p_wk.add_argument(
         "--push",
@@ -465,6 +538,11 @@ def main() -> None:
     )
     p_bs.set_defaults(func=cmd_best_squad)
 
+    p_plan = sub.add_parser("plan", help="Multi-gameweek MILP transfer plan for my_squad.json")
+    p_plan.add_argument("--horizon", type=int, default=4, help="Gameweeks to plan (2-5, default 4)")
+    p_plan.add_argument("--wildcard", action="store_true", help="Treat this week as a wildcard (unlimited transfers)")
+    p_plan.set_defaults(func=cmd_plan)
+
     p_news = sub.add_parser("add-news", help="Add a custom manager quote or injury update")
     p_news.add_argument("player", help="Player web_name, e.g. \"O'Reilly\"")
     p_news.add_argument("headline", help="Short headline")
@@ -474,7 +552,7 @@ def main() -> None:
 
     p_nn = sub.add_parser(
         "train-nn",
-        help="Train the supervised neural network (14->24->12->1) on multi-season GW data",
+        help="Retrain the multi-head model and print the time-ordered holdout report",
     )
     p_nn.add_argument(
         "--fetch-real",

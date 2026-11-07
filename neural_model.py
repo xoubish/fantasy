@@ -49,6 +49,8 @@ MODEL_VERSION = "mh-v1"
 DEFAULT_CAMEO_POINTS = 1.15
 HAUL_THRESHOLD = 9.0
 EWMA_DECAY = 0.80
+SHRINK_PSEUDO_90S = 1.0  # pseudo-minutes (in 90s) added to every per-90 denominator
+XP_FULL_CLIP = (0.5, 14.0)  # sane range for points given 60+ minutes
 
 FEATURE_NAMES: List[str] = [
     "is_GKP",
@@ -207,16 +209,19 @@ def compute_recency_weighted_metrics(
         raw_90 += m90
 
     if w_90 > 1e-9:
-        out["ewma_ppg"] = acc["pts"] / w_90
-        out["ewma_xg90"] = acc["xg"] / w_90
-        out["ewma_xa90"] = acc["xa"] / w_90
-        out["ewma_xgc90"] = acc["xgc"] / w_90
-        out["ewma_def90"] = acc["def"] / w_90
-        out["ewma_ict90"] = acc["ict"] / w_90
-        out["ewma_bps90"] = acc["bps"] / w_90
-        out["ewma_saves90"] = acc["saves"] / w_90
-        out["ewma_bonus90"] = acc["bonus"] / w_90
-        out["season_ppg90"] = raw_pts / max(raw_90, 0.5)
+        # Shrink per-90 rates toward zero with one pseudo-match of 90 minutes so a 2-minute
+        # cameo with 2 points does not become "90 points per 90".
+        den = w_90 + SHRINK_PSEUDO_90S
+        out["ewma_ppg"] = acc["pts"] / den
+        out["ewma_xg90"] = acc["xg"] / den
+        out["ewma_xa90"] = acc["xa"] / den
+        out["ewma_xgc90"] = acc["xgc"] / den
+        out["ewma_def90"] = acc["def"] / den
+        out["ewma_ict90"] = acc["ict"] / den
+        out["ewma_bps90"] = acc["bps"] / den
+        out["ewma_saves90"] = acc["saves"] / den
+        out["ewma_bonus90"] = acc["bonus"] / den
+        out["season_ppg90"] = raw_pts / (raw_90 + SHRINK_PSEUDO_90S)
         out["momentum"] = out["ewma_ppg"] - out["season_ppg90"]
     return out
 
@@ -487,7 +492,7 @@ class FPLNeuralNetwork:
     # ---- forward ----
     def _forward(self, X: np.ndarray) -> Dict[str, np.ndarray]:
         P = self.params
-        Xn = (X - self.mu) / self.sigma
+        Xn = np.clip((X - self.mu) / self.sigma, -6.0, 6.0)
         z1 = Xn @ P["W1"] + P["b1"]
         a1 = _leaky(z1)
         z2 = a1 @ P["W2"] + P["b2"]
@@ -503,7 +508,7 @@ class FPLNeuralNetwork:
         if Xa.ndim == 1:
             Xa = Xa[None, :]
         f = self._forward(Xa)
-        xp_full = np.maximum(0.5, f["xp"])
+        xp_full = np.clip(f["xp"], XP_FULL_CLIP[0], XP_FULL_CLIP[1])
         p_full = f["pm"][:, 2]
         p_cameo = f["pm"][:, 1]
         return {
@@ -551,7 +556,9 @@ class FPLNeuralNetwork:
             self.cameo_points = float(pts[cameo_rows].mean())
 
         self.mu = X.mean(axis=0)
-        self.sigma = X.std(axis=0) + 1e-6
+        # Floor the scale: a feature that is nearly constant in a small early-season training
+        # set must not turn a different live value into a huge standardised input.
+        self.sigma = np.maximum(X.std(axis=0), 0.05)
         # Recency weight: the most recent gameweeks matter slightly more
         gws = np.asarray([s.gw for s in samples], dtype=float)
         w_time = 0.93 ** (gws.max() - gws)

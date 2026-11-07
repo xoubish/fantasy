@@ -1,7 +1,7 @@
 """
 AI Tactical Head Coach Layer (ai_coach.py)
 
-Acts as the contextual Football Intelligence layer on top of the Dual-Head Neural Network:
+Acts as the contextual football-intelligence layer on top of the multi-head neural network:
   1. Analyzes Teammate Creative/Defensive Synergy (club-level xG/xA supply & key injuries)
   2. Evaluates 3-Gameweek Fixture Swings (`GW t -> GW t+1 -> GW t+2`) to flag 1-week traps
      vs. 3-week green-run breakouts

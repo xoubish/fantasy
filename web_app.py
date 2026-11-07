@@ -13,7 +13,7 @@ import http.server
 import json
 import socketserver
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fpl_data import load_players
 from neural_model import get_or_train_neural_net
@@ -21,13 +21,17 @@ from news_scraper import load_all_news
 from predictor import (
     OptimizedSquadResult,
     PlayerPrediction,
+    build_transfer_plan,
     get_best_squad_variations,
+    is_selectable,
     predict_player,
 )
+
 
 ROOT_DIR = Path(__file__).parent
 SQUAD_CONFIG_PATH = ROOT_DIR / "my_squad.json"
 INDEX_HTML_PATH = ROOT_DIR / "index.html"
+BACKTEST_RESULTS_PATH = ROOT_DIR / "data" / "backtest_results.json"
 
 
 def _serialize_pred(p: PlayerPrediction, is_cap: bool = False, is_vice: bool = False) -> Dict[str, Any]:
@@ -69,10 +73,10 @@ def _serialize_squad_result(
     cap = res.captain
     vice = res.vice_captain
     coach_verdict = (
-        f"AI Head Coach selects {res.formation} (£{total_cost:.1f}m): "
-        f"Captains {cap.player.web_name} ({cap.expected_points * 2:.1f}p, {int(round(cap.haul_prob * 100))}% haul odds vs {cap.player.next_opponent}) "
-        f"backed by {vice.player.web_name} (V, {vice.expected_points:.1f}p vs {vice.player.next_opponent}), "
-        f"balancing 3-GW fixture swings and CBIT defensive floor."
+        f"Exact MILP optimum, {res.formation} for £{total_cost:.1f}m. "
+        f"Captain {cap.player.web_name} ({cap.expected_points * 2:.1f}p doubled, {int(round(cap.haul_prob * 100))}% haul odds vs {cap.player.next_opponent}), "
+        f"vice {vice.player.web_name} ({vice.expected_points:.1f}p vs {vice.player.next_opponent}). "
+        f"Expected points are minutes-weighted: P(60+ min) x points given a start + P(cameo) x cameo points."
     )
     return {
         "title": title,
@@ -115,11 +119,7 @@ def build_web_payload() -> Dict[str, Any]:
     ]
 
     healthy_active = sorted(
-        [
-            p
-            for p in all_preds
-            if p.news.risk_level in ("NONE", "POSITIVE") and p.player.minutes >= 270
-        ],
+        [p for p in all_preds if is_selectable(p, 0.6)],
         key=lambda x: x.expected_points,
         reverse=True,
     )[:65]
@@ -131,7 +131,61 @@ def build_web_payload() -> Dict[str, Any]:
         "variations": variations_json,
         "playerPool": healthy_pool_json,
         "nnMetrics": nn_net.metrics,
+        "transferPlan": _build_my_squad_plan(all_players, all_preds),
+        "backtest": _load_backtest_summary(),
     }
+
+
+def _build_my_squad_plan(all_players, all_preds) -> Optional[Dict[str, Any]]:
+    """Multi-gameweek MILP transfer plan for the squad in my_squad.json (None if not 15 players)."""
+    try:
+        from fpl_assistant import _match_squad_players
+
+        cfg = json.loads(SQUAD_CONFIG_PATH.read_text(encoding="utf-8"))
+        squad_players = _match_squad_players(all_players, cfg)
+        if len(squad_players) != 15:
+            return None
+        by_id = {p.player.id: p for p in all_preds}
+        squad_preds = [by_id[p.id] for p in squad_players]
+        ft = int(cfg.get("free_transfers", 1))
+        bank = float(cfg.get("bank_millions", 0.0))
+        view = build_transfer_plan(squad_preds, all_preds, bank, ft, horizon=4)
+        if view is None:
+            return None
+        weeks = []
+        for w in view.plan.weeks:
+            weeks.append({
+                "gw": w.gw,
+                "ft": w.free_transfers_before,
+                "out": [view.by_id[i].player.web_name for i in w.transfers_out],
+                "in": [f"{view.by_id[i].player.web_name} (£{view.by_id[i].player.price:.1f}m)" for i in w.transfers_in],
+                "hits": w.hits,
+                "captain": view.by_id[w.captain_id].player.web_name,
+                "xp": w.expected_points,
+            })
+        return {"name": cfg.get("manager_name", "My squad"), "freeTransfers": ft, "bank": bank,
+                "objective": view.plan.objective, "totalHits": view.plan.total_hits, "weeks": weeks}
+    except Exception as exc:  # the page must still build without a valid my_squad.json
+        return {"error": str(exc)}
+
+
+def _load_backtest_summary() -> Optional[Dict[str, Any]]:
+    if not BACKTEST_RESULTS_PATH.exists():
+        return None
+    try:
+        res = json.loads(BACKTEST_RESULTS_PATH.read_text(encoding="utf-8"))
+        s = res["summary"]
+        return {
+            "weeks": [w["gw"] for w in res["weeks"]],
+            "totals": s["totals"],
+            "modelRollingVsAvg": s["model_rolling_vs_fpl_average"],
+            "naiveRollingVsAvg": s["naive_rolling_vs_fpl_average"],
+            "modelFhVsNaiveFh": s["model_freehit_vs_naive_freehit"],
+            "playerLevel": s["player_level"],
+            "bias": s["freehit_prediction_bias"],
+        }
+    except Exception:
+        return None
 
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -572,6 +626,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           <div id="coach-verdict-box" style="margin-bottom:10px;padding:9px 11px;background:rgba(4,245,255,0.08);border-left:3px solid var(--fpl-cyan);border-radius:6px;color:#ece6f2;"></div>
           <div id="nn-summary"></div>
         </div>
+        <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
+          <h3>Your Squad: Transfer Plan</h3>
+          <div id="plan-box"></div>
+        </div>
+        <div class="card-panel" style="font-size:0.79rem; color:var(--text-muted); line-height:1.5;">
+          <h3>Walk-Forward Backtest</h3>
+          <div id="backtest-box"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -794,15 +856,54 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     if (DATA.nnMetrics) {
       const m = DATA.nnMetrics;
+      const h = m.holdout || {};
       const top3 = Object.entries(m.feature_importance || {})
         .slice(0, 3)
         .map(([k, v]) => `${k} (${v}%)`)
         .join(", ");
       document.getElementById("nn-summary").innerHTML = `
-        <div>• <strong>AI Head Coach:</strong> Adjusts xP & captaincy using press conferences, club creative supply, set-piece roles & 3-GW fixture traps</div>
-        <div>• <strong>Neural Network:</strong> ${m.architecture || '22→40→20→2 Dual-Head (xP + Haul Ceiling)'}</div>
-        <div>• <strong>Training Data:</strong> ${m.real_gw_samples || (m.train_samples + m.val_samples)} real 2026/27 PL match logs (through GW ${m.latest_trained_gw || 9}, ${m.val_mae}p MAE)</div>
-        <div>• <strong>Top Learned Signals:</strong> ${top3}</div>
+        <div>• <strong>Model:</strong> ${m.architecture || 'multi-head network'} trained on actual gameweek points and minutes</div>
+        <div>• <strong>Data:</strong> ${m.real_gw_samples} player-gameweek rows through GW ${m.latest_trained_gw}</div>
+        <div>• <strong>Holdout (${m.holdout_gws || 'n/a'}, future gameweeks):</strong> MAE ${h.mae_points} pts vs naive baseline ${h.mae_naive_baseline} (constant ${h.mae_constant_baseline}); correlation ${h.corr_points} vs naive ${h.corr_naive_baseline}</div>
+        <div>• <strong>Minutes model:</strong> log-loss ${h.minutes_logloss} vs base rate ${h.minutes_logloss_baseline} • <strong>Haul odds:</strong> Brier ${h.haul_brier} vs base rate ${h.haul_brier_baseline}</div>
+        <div>• <strong>Strongest inputs:</strong> ${top3}</div>
+        <div>• <strong>Squads:</strong> exact mixed-integer optimisation (HiGHS), not a heuristic search</div>
+      `;
+    }
+
+    const plan = DATA.transferPlan;
+    const planBox = document.getElementById("plan-box");
+    if (!plan) {
+      planBox.innerHTML = `<div>Add your 15 players to <code>my_squad.json</code> and rebuild to see a multi-gameweek transfer plan.</div>`;
+    } else if (plan.error) {
+      planBox.innerHTML = `<div>Plan unavailable: ${plan.error}</div>`;
+    } else {
+      planBox.innerHTML = `
+        <div style="margin-bottom:6px;">${plan.name} • FT ${plan.freeTransfers} • bank £${plan.bank.toFixed(1)}m • plan value ${plan.objective.toFixed(1)} xP (hits: ${plan.totalHits})</div>
+        ${plan.weeks.map(w => `
+          <div style="padding:6px 0;border-top:1px solid var(--glass-border);">
+            <strong style="color:#fff;">GW ${w.gw}</strong> <span style="opacity:.75">(FT ${w.ft}${w.hits ? `, hit −${4 * w.hits}` : ''})</span><br>
+            ${w.out.length ? `OUT: ${w.out.join(', ')}<br>IN: <strong style="color:var(--fpl-green)">${w.in.join(', ')}</strong><br>` : 'No transfer<br>'}
+            Captain ${w.captain} • XI ${w.xp.toFixed(1)} xP
+          </div>`).join('')}
+        <div style="margin-top:6px;opacity:.7;">Free transfers bank to 5; every extra transfer costs 4 points plus a friction margin, so marginal swaps are skipped.</div>
+      `;
+    }
+
+    const bt = DATA.backtest;
+    const btBox = document.getElementById("backtest-box");
+    if (!bt) {
+      btBox.innerHTML = `<div>Run <code>python3 backtest.py</code> to populate out-of-sample results.</div>`;
+    } else {
+      const fmt = (m) => `${m.mean >= 0 ? '+' : ''}${m.mean.toFixed(1)} ± ${m.sd.toFixed(1)} pts/week (won ${m.weeks_won}/${m.weeks})`;
+      btBox.innerHTML = `
+        <div>Gameweeks ${bt.weeks[0]}–${bt.weeks[bt.weeks.length - 1]}: trained only on earlier weeks, scored on real points with auto-subs and captaincy.</div>
+        <div style="margin-top:6px;">• <strong>Player-level accuracy:</strong> MAE ${bt.playerLevel.model_mae} vs naive ${bt.playerLevel.naive_mae}; correlation ${bt.playerLevel.model_corr} vs ${bt.playerLevel.naive_corr}</div>
+        <div>• <strong>Weekly rebuild, model vs naive:</strong> ${fmt(bt.modelFhVsNaiveFh)}</div>
+        <div>• <strong>Realistic manager (1 FT/week), model vs FPL average:</strong> ${fmt(bt.modelRollingVsAvg)}</div>
+        <div>• <strong>Realistic manager, naive vs FPL average:</strong> ${fmt(bt.naiveRollingVsAvg)}</div>
+        <div>• <strong>Projection bias:</strong> weekly-rebuild squads were predicted ${bt.bias >= 0 ? '+' : ''}${bt.bias} pts/week vs actual</div>
+        <div style="margin-top:6px;opacity:.7;">${bt.weeks.length} weeks is a small sample: one gameweek has a standard deviation of roughly 15 points.</div>
       `;
     }
 
