@@ -3,7 +3,7 @@
 PL Fantasy Predictor (web_app.py)
 
 Focused strictly on the Best £100m Squad of the Week before games start,
-with a score-target squad shuffle and a Player Inspector when you click a card.
+with a squad shuffle and a Player Inspector when you click a card.
 """
 
 from __future__ import annotations
@@ -123,7 +123,6 @@ def build_web_payload() -> Dict[str, Any]:
 
     return {
         "squads": squads_json,
-        "shuffle": {"defaultMinimum": min(55, max(0, int(squads_json[0]["expectedPoints"] - 1)))},
         "nnMetrics": nn_net.metrics,
         "transferPlan": _build_my_squad_plan(all_players, all_preds),
         "backtest": _load_backtest_summary(),
@@ -220,7 +219,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PL Fantasy Predictor</title>
-  <meta name="description" content="Premier League fantasy player projections, squad shuffling with a points target, transfer planning, and historical model performance." />
+  <meta name="description" content="Premier League fantasy player projections, squad shuffling, transfer planning, and historical model performance." />
   <meta name="theme-color" content="#080e14" />
   <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -279,12 +278,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .section-label { display: flex; align-items: center; gap: 14px; }
     .section-number { font: 500 11px var(--mono); color: var(--accent); letter-spacing: 0; border: 1px solid var(--line-strong); padding: 3px 6px; }
     .section-hint { font: 10px var(--mono); color: var(--muted); }
-    .shuffle-controls { display: grid; grid-template-columns: auto 1fr; gap: 12px 28px; align-items: end; padding: 20px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 20px; }
-    .shuffle-target label { display: block; font: 10px var(--mono); color: var(--text-2); margin-bottom: 9px; }
-    .target-input { display: flex; align-items: center; gap: 9px; }
-    .target-input input { width: 96px; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 0; background: var(--bg); color: var(--text); font: 500 22px var(--mono); }
-    .target-input input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .target-input span { font: 11px var(--mono); color: var(--muted); }
+    .shuffle-controls { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 20px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 20px; }
     .shuffle-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
     .shuffle-button, .reset-button { min-height: 48px; padding: 12px 18px; border: 1px solid var(--line-strong); cursor: pointer; font-size: 13px; font-weight: 600; }
     .shuffle-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; background: var(--lime); color: #18221a; border-color: var(--lime); }
@@ -431,9 +425,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .shuffle-controls { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 14px; }
       .shuffle-actions { gap: 8px; }
       .shuffle-button, .reset-button { flex: 1; padding: 12px 10px; font-size: 11px; }
-      .shuffle-target { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-      .shuffle-target label { margin: 0; max-width: 130px; line-height: 1.6; }
-      .target-input input { width: 82px; }
 
       .container { padding: 0 16px; }
       .topbar { padding: 20px 0 16px; gap: 18px; flex-wrap: wrap; }
@@ -509,7 +500,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div>
           <p class="eyebrow">Premier League / Fantasy football</p>
           <h1>Find your <span>next squad</span></h1>
-          <p class="intro-copy">Explore different £100m teams and compare their predicted points.<br>Shuffle for another squad above your target.</p>
+          <p class="intro-copy">Explore different £100m teams and compare their predicted points.<br>Every shuffle stays within five points of the top squad.</p>
         </div>
         <svg class="orbital-mark" viewBox="0 0 260 260" fill="none" aria-hidden="true"><circle cx="130" cy="130" r="68" stroke="currentColor"/><circle cx="130" cy="130" r="86" stroke="currentColor" stroke-dasharray="2 8"/><ellipse cx="130" cy="130" rx="124" ry="37" transform="rotate(-35 130 130)" stroke="currentColor"/><path d="M130 12V32M130 228V248M12 130H32M228 130H248M120 130H140M130 120V140" stroke="currentColor"/><circle cx="221" cy="64" r="4" fill="currentColor"/></svg>
         <div class="fixture-ticket" aria-label="Upcoming gameweek deadline">
@@ -521,9 +512,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <section id="selection" aria-labelledby="selection-label">
         <div class="section-head"><h2 class="section-label" id="selection-label"><span class="section-number">01</span> Squad shuffle</h2><span class="section-hint">15 players / £100m budget</span></div>
         <div class="shuffle-controls">
-          <div class="shuffle-target"><label for="minimum-points">Minimum predicted points</label><div class="target-input"><input id="minimum-points" type="number" min="0" step="0.1" value="55" inputmode="decimal" aria-describedby="shuffle-help shuffle-status" /><span>xP</span></div></div>
           <div class="shuffle-actions"><button type="button" class="shuffle-button" id="shuffle-button" aria-controls="squad-view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h3c5 0 7 12 12 12h3M17 14l4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3M17 2l4 4-4 4"/></svg>Shuffle squad</button><button type="button" class="reset-button" id="top-squad-button" aria-controls="squad-view">Top projected squad</button></div>
-          <p id="shuffle-help">Find another team at or above your target. Predicted points include the captain; actual results will vary.</p>
+          <p id="shuffle-help">Each shuffle shows a different high-scoring team from the sampled pool. Predicted points include the captain; actual results will vary.</p>
           <p id="shuffle-status" role="status" aria-live="polite" aria-atomic="true"></p>
         </div>
         <div id="squad-view">
@@ -700,32 +690,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       inspectPlayer(cap.id);
     }
 
-    function matchingSquads() {
-      const input = document.getElementById("minimum-points");
-      const minimum = input.valueAsNumber;
-      if (!input.validity.valid || !Number.isFinite(minimum) || minimum < 0) return null;
-      return DATA.squads.map((s, i) => i).filter(i => DATA.squads[i].expectedPoints >= minimum);
-    }
-
     function updateShuffleStatus(message = "") {
-      const choices = matchingSquads();
       const button = document.getElementById("shuffle-button");
       const status = document.getElementById("shuffle-status");
-      if (choices === null) {
-        button.disabled = true;
-        status.textContent = "Enter a valid points target of zero or more.";
-        return;
-      }
-      const others = choices.filter(i => i !== currentSquadIdx);
-      button.disabled = !others.length;
-      if (!choices.length) {
-        status.textContent = `No saved squad reaches that target. The highest projection here is ${DATA.squads[0].expectedPoints.toFixed(1)} xP. Lower the target or view the top projected squad.`;
-      } else if (!others.length) {
-        status.textContent = `Only the current squad meets this target. Lower it to find a different team.`;
-      } else {
-        const meetsTarget = choices.includes(currentSquadIdx);
-        status.textContent = `${message ? message + " " : ""}${choices.length} of ${DATA.squads.length} generated squads meet your target.${meetsTarget ? "" : " The current squad is below the target; shuffle to replace it."}`;
-      }
+      button.disabled = DATA.squads.length < 2;
+      status.textContent = message || `${DATA.squads.length} squads in the pool · all within ${(DATA.squads[0].expectedPoints - DATA.squads[DATA.squads.length - 1].expectedPoints).toFixed(1)} xP of the top squad.`;
     }
 
     function selectSquad(i) {
@@ -735,9 +704,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function shuffleSquad() {
-      const eligible = matchingSquads();
-      if (!eligible) { updateShuffleStatus(); return; }
-      const others = eligible.filter(i => i !== currentSquadIdx);
+      const others = DATA.squads.map((s, i) => i).filter(i => i !== currentSquadIdx);
       if (!others.length) { updateShuffleStatus(); return; }
       let options = others.filter(i => !seenSquads.has(i));
       let restarted = false;
@@ -756,11 +723,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const changed = changedCount(chosen);
       selectSquad(chosen);
       const gap = Math.max(0, DATA.squads[0].expectedPoints - DATA.squads[chosen].expectedPoints);
-      updateShuffleStatus(`${restarted ? "All matching squads seen; starting another round. " : ""}${changed} starter${changed === 1 ? "" : "s"} changed · ${gap.toFixed(1)} xP below the top squad.`);
+      updateShuffleStatus(`${restarted ? "All squads seen; starting another round. " : ""}${changed} starter${changed === 1 ? "" : "s"} changed · ${gap.toFixed(1)} xP below the top squad.`);
     }
 
-    document.getElementById("minimum-points").value = DATA.shuffle.defaultMinimum;
-    document.getElementById("minimum-points").addEventListener("input", () => updateShuffleStatus());
     document.getElementById("shuffle-button").addEventListener("click", shuffleSquad);
     document.getElementById("top-squad-button").addEventListener("click", () => {
       selectSquad(0);
