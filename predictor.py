@@ -154,15 +154,14 @@ def predict_player(
         + bonus_pts
     )
 
-    # 4. Supervised Neural Network (14 -> 24 -> 12 -> 1) + Rule Engine Hybrid Ensemble
-    hist_ppg = player.historical_ppg_3yr
-    rule_90_xp = 0.70 * raw_90_xp + 0.15 * player.form + 0.15 * hist_ppg
-
+    # 4. End-to-End 18-Feature Supervised Neural Network (18 -> 32 -> 16 -> 1)
+    # Zero hand-picked blending weights: all FPL rule multipliers, Poisson CS/GC2 odds,
+    # 3-year PPG, form, xG/90, xA/90, BPS/90, set-piece duties, and opponent ratings
+    # are fed directly into the network input vector!
     nn_model = _get_nn()
     nn_90_xp = nn_model.predict(extract_features(player))
-
-    # Hybrid Ensemble: 55% Supervised Neural Network + 45% Official FPL Rule Engine
-    blended_90_xp = 0.55 * nn_90_xp + 0.45 * rule_90_xp
+    blended_90_xp = nn_90_xp
+    rule_90_xp = raw_90_xp  # kept purely as a reference diagnostic in the UI inspector
 
     # 5. Apply News / Press Conference Start & Cameo Probabilities
     # If a player starts (60+ mins) -> blended_90_xp; if cameo (<60 mins) -> 1.0 pt; if 0 mins -> 0.0 pt

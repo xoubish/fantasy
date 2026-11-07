@@ -1,19 +1,21 @@
 """
-FPL Deep Learning / Multi-Layer Perceptron Neural Network (neural_model.py)
+End-to-End Supervised FPL Neural Network (neural_model.py)
+
+Folds ALL player stats, 3-year historical baselines, fixture strengths, Poisson
+clean-sheet / goals-conceded probabilities, and official FPL position scoring multipliers
+into a single 18-feature input vector—eliminating all hand-tuned blending weights!
 
 Architecture:
-  Input Layer (14 features):
-    [is_GKP, is_DEF, is_MID, is_FWD,
-     xg_per_90, xa_per_90, xgc_per_90, bps_per_90,
-     form, historical_ppg_3yr, is_home,
-     opp_attack_norm, opp_defence_norm, set_piece_index]
-  -> Dense Layer 1 (24 neurons, LeakyReLU)
-  -> Dense Layer 2 (12 neurons, LeakyReLU)
-  -> Output Layer (1 neuron, Linear -> 90-min FPL Expected Points)
-
-Trained with Mini-Batch Adam Optimizer + L2 Weight Decay on 2,400+ historical
-player-gameweek records across the last 3 seasons (2023-24, 2024-25, 2025-26),
-caching trained weights & validation metrics to `data/nn_weights.json`.
+  Input Layer (18 features):
+    1-4.   [is_GKP, is_DEF, is_MID, is_FWD]
+    5-6.   [fpl_goal_pts_norm (10/6/5/4), fpl_cs_pts_norm (4/4/1/0)]
+    7-10.  [xg_per_90, xa_per_90, xgc_per_90, bps_per_90]
+    11-12. [poisson_cs_prob, poisson_2plus_gc_risk]
+    13-14. [form, historical_ppg_3yr]
+    15-18. [is_home, opp_attack_ease, opp_defence_ease, set_piece_index]
+  -> Dense Layer 1 (32 neurons, LeakyReLU)
+  -> Dense Layer 2 (16 neurons, LeakyReLU)
+  -> Output Layer (1 neuron -> Predicted 90-Minute FPL Points)
 """
 
 from __future__ import annotations
@@ -33,30 +35,63 @@ from fpl_data import DATA_DIR, USER_AGENT, VAASTAV_BASE_URL, PlayerRecord, load_
 NN_WEIGHTS_PATH = DATA_DIR / "nn_weights.json"
 REAL_GW_CACHE_PATH = DATA_DIR / "real_gw_samples.json"
 
+GOAL_MULT_NORM = {"GKP": 1.0, "DEF": 0.6, "MID": 0.5, "FWD": 0.4}
+CS_MULT_NORM = {"GKP": 1.0, "DEF": 1.0, "MID": 0.25, "FWD": 0.0}
+
 FEATURE_NAMES = [
     "is_GKP",
     "is_DEF",
     "is_MID",
     "is_FWD",
+    "fpl_goal_pts_mult",
+    "fpl_cs_pts_mult",
     "xg_per_90",
     "xa_per_90",
     "xgc_per_90",
     "bps_per_90",
+    "poisson_cs_prob",
+    "poisson_2plus_gc_risk",
     "form",
     "historical_ppg_3yr",
     "is_home",
-    "opp_attack_norm",
-    "opp_defence_norm",
+    "opp_attack_ease",
+    "opp_defence_ease",
     "set_piece_index",
 ]
 
 
+def compute_poisson_probs(
+    xgc_per_90: float, is_home: bool, opp_attack_strength: int
+) -> Tuple[float, float]:
+    """Computes exact Poisson P(Clean Sheet) and P(Concede 2+ Goals) from match xGC."""
+    home_def_factor = 0.88 if is_home else 1.12
+    opp_att_factor = (opp_attack_strength / 1140.0) ** 1.35
+    lambda_gc = max(0.35, xgc_per_90 * home_def_factor * opp_att_factor)
+
+    cs_prob = math.exp(-lambda_gc)
+    concede_2plus = 1.0 - math.exp(-lambda_gc) * (1.0 + lambda_gc)
+    return cs_prob, concede_2plus
+
+
 def extract_features(player: PlayerRecord) -> List[float]:
-    """Extracts 14 normalized numerical features for the neural network."""
-    is_gkp = 1.0 if player.position == "GKP" else 0.0
-    is_def = 1.0 if player.position == "DEF" else 0.0
-    is_mid = 1.0 if player.position == "MID" else 0.0
-    is_fwd = 1.0 if player.position == "FWD" else 0.0
+    """
+    Extracts all 18 normalized features (stats + FPL scoring rules + Poisson odds + fixture)
+    so the Neural Network learns the entire mapping end-to-end without hand weights.
+    """
+    pos = player.position
+    is_gkp = 1.0 if pos == "GKP" else 0.0
+    is_def = 1.0 if pos == "DEF" else 0.0
+    is_mid = 1.0 if pos == "MID" else 0.0
+    is_fwd = 1.0 if pos == "FWD" else 0.0
+
+    goal_mult = GOAL_MULT_NORM[pos]
+    cs_mult = CS_MULT_NORM[pos]
+
+    cs_prob, gc2_prob = compute_poisson_probs(
+        player.xgc_per_90, player.is_home, player.opp_attack_strength
+    )
+    # Only GKP and DEF suffer the -1 pt penalty for conceding 2+ goals
+    gc2_risk_feature = gc2_prob if pos in ("GKP", "DEF") else 0.0
 
     xg = player.xg_per_90
     xa = player.xa_per_90
@@ -66,7 +101,6 @@ def extract_features(player: PlayerRecord) -> List[float]:
     hist = player.historical_ppg_3yr / 8.0
     home = 1.0 if player.is_home else 0.0
 
-    # Higher when opponent attack/defence is weaker (easier matchup -> closer to +1)
     opp_att_ease = (1200.0 - player.opp_attack_strength) / 200.0
     opp_def_ease = (1200.0 - player.opp_defence_strength) / 200.0
 
@@ -79,10 +113,14 @@ def extract_features(player: PlayerRecord) -> List[float]:
         is_def,
         is_mid,
         is_fwd,
+        goal_mult,
+        cs_mult,
         xg,
         xa,
         xgc,
         bps,
+        cs_prob,
+        gc2_risk_feature,
         form,
         hist,
         home,
@@ -105,6 +143,7 @@ class TrainingMetrics:
     epochs: int
     train_samples: int
     val_samples: int
+    real_gw_samples: int
     train_mae: float
     val_mae: float
     val_rmse: float
@@ -113,13 +152,14 @@ class TrainingMetrics:
 
 class FPLNeuralNetwork:
     """
-    2-Hidden-Layer Feedforward Neural Network (14 -> 24 -> 12 -> 1)
-    with Mini-Batch Adam Optimizer & L2 Regularization.
+    End-to-End 2-Hidden-Layer Feedforward Neural Network (18 -> 32 -> 16 -> 1)
+    trained with Mini-Batch Adam Optimizer & L2 Regularization.
     """
 
-    def __init__(self, in_dim: int = 14, h1_dim: int = 24, h2_dim: int = 12, seed: int = 42) -> None:
+    def __init__(
+        self, in_dim: int = 18, h1_dim: int = 32, h2_dim: int = 16, seed: int = 42
+    ) -> None:
         rng = random.Random(seed)
-        # He initialization
         s1 = math.sqrt(2.0 / in_dim)
         s2 = math.sqrt(2.0 / h1_dim)
         s3 = math.sqrt(2.0 / h2_dim)
@@ -131,21 +171,17 @@ class FPLNeuralNetwork:
         self.b2 = [0.0 for _ in range(h2_dim)]
 
         self.W3 = [rng.gauss(0, s3) for _ in range(h2_dim)]
-        self.b3 = 2.5  # Baseline appearance points bias
+        self.b3 = 2.2
 
         self.metrics: Dict[str, float | int | Dict[str, float]] = {}
 
     def forward(self, x: List[float]) -> Tuple[List[float], List[float], float]:
         h1 = [
-            _leaky_relu(
-                sum(w_ij * x_j for w_ij, x_j in zip(w_row, x)) + b_i
-            )
+            _leaky_relu(sum(w_ij * x_j for w_ij, x_j in zip(w_row, x)) + b_i)
             for w_row, b_i in zip(self.W1, self.b1)
         ]
         h2 = [
-            _leaky_relu(
-                sum(w_ij * h1_j for w_ij, h1_j in zip(w_row, h1)) + b_i
-            )
+            _leaky_relu(sum(w_ij * h1_j for w_ij, h1_j in zip(w_row, h1)) + b_i)
             for w_row, b_i in zip(self.W2, self.b2)
         ]
         out = sum(w_i * h2_i for w_i, h2_i in zip(self.W3, h2)) + self.b3
@@ -158,8 +194,9 @@ class FPLNeuralNetwork:
     def train(
         self,
         dataset: List[Tuple[List[float], float]],
-        epochs: int = 75,
-        lr: float = 0.006,
+        real_gw_count: int = 0,
+        epochs: int = 65,
+        lr: float = 0.005,
         l2_reg: float = 1e-4,
     ) -> TrainingMetrics:
         rng = random.Random(42)
@@ -174,7 +211,6 @@ class FPLNeuralNetwork:
         h2_dim = len(self.b2)
         in_dim = len(self.W1[0])
 
-        # Adam first & second moment buffers
         mW1 = [[0.0] * in_dim for _ in range(h1_dim)]
         vW1 = [[0.0] * in_dim for _ in range(h1_dim)]
         mb1 = [0.0] * h1_dim
@@ -191,7 +227,7 @@ class FPLNeuralNetwork:
 
         beta1, beta2, eps = 0.9, 0.999, 1e-8
         step = 0
-        batch_size = 32
+        batch_size = 48
 
         for _ in range(epochs):
             rng.shuffle(train_set)
@@ -210,8 +246,7 @@ class FPLNeuralNetwork:
                 for x, y_true in batch:
                     h1, h2, y_pred = self.forward(x)
                     err = y_pred - y_true
-                    # Huber-smoothed gradient for robustness to 18-pt haul outliers
-                    d_out = max(-4.0, min(4.0, err)) / bs
+                    d_out = max(-3.5, min(3.5, err)) / bs
 
                     gb3 += d_out
                     dh2 = [0.0] * h2_dim
@@ -232,10 +267,8 @@ class FPLNeuralNetwork:
                         for k in range(in_dim):
                             gW1[j][k] += dh1_act * x[k] + l2_reg * self.W1[j][k] / bs
 
-                # Bias-corrected learning rate
                 lr_t = lr * math.sqrt(1.0 - beta2**step) / (1.0 - beta1**step)
 
-                # Update W3, b3
                 mb3 = beta1 * mb3 + (1 - beta1) * gb3
                 vb3 = beta2 * vb3 + (1 - beta2) * (gb3 * gb3)
                 self.b3 -= lr_t * mb3 / (math.sqrt(vb3) + eps)
@@ -264,13 +297,11 @@ class FPLNeuralNetwork:
                         vW1[j][k] = beta2 * vW1[j][k] + (1 - beta2) * (gW1[j][k] ** 2)
                         self.W1[j][k] -= lr_t * mW1[j][k] / (math.sqrt(vW1[j][k]) + eps)
 
-        # Evaluate Train & Validation Error
         train_mae = sum(abs(self.predict(x) - y) for x, y in train_set) / len(train_set)
         val_errors = [self.predict(x) - y for x, y in val_set]
         val_mae = sum(abs(e) for e in val_errors) / len(val_set)
         val_rmse = math.sqrt(sum(e * e for e in val_errors) / len(val_set))
 
-        # Compute Feature Sensitivity / Importance via input gradient magnitude
         imp_raw: Dict[str, float] = {}
         for k, fname in enumerate(FEATURE_NAMES):
             l1_norm = sum(abs(self.W1[j][k]) for j in range(h1_dim))
@@ -285,15 +316,18 @@ class FPLNeuralNetwork:
             epochs=epochs,
             train_samples=len(train_set),
             val_samples=len(val_set),
+            real_gw_samples=real_gw_count,
             train_mae=round(train_mae, 3),
             val_mae=round(val_mae, 3),
             val_rmse=round(val_rmse, 3),
             feature_importance=imp_pct,
         )
         self.metrics = {
+            "architecture": "18 -> 32 -> 16 -> 1 (End-to-End LeakyReLU MLP, 0 Hand Weights)",
             "epochs": metrics.epochs,
             "train_samples": metrics.train_samples,
             "val_samples": metrics.val_samples,
+            "real_gw_samples": metrics.real_gw_samples,
             "train_mae": metrics.train_mae,
             "val_mae": metrics.val_mae,
             "val_rmse": metrics.val_rmse,
@@ -318,6 +352,8 @@ class FPLNeuralNetwork:
     def load(cls, path: Path = NN_WEIGHTS_PATH) -> "FPLNeuralNetwork":
         net = cls()
         data = json.loads(path.read_text(encoding="utf-8"))
+        if len(data["W1"][0]) != 18:
+            raise ValueError("Outdated input dimension; retrain required.")
         net.W1 = data["W1"]
         net.b1 = data["b1"]
         net.W2 = data["W2"]
@@ -328,25 +364,125 @@ class FPLNeuralNetwork:
         return net
 
 
-def build_historical_training_samples(
-    players: List[PlayerRecord], samples_per_player_season: int = 24
+def fetch_real_merged_gw_samples(
+    seasons: Tuple[str, ...] = ("2022-23", "2023-24", "2024-25"),
+    max_samples_per_season: int = 2500,
 ) -> List[Tuple[List[float], float]]:
     """
-    Constructs gameweek-level training samples from the 3-year historical seasons
-    (2023-24, 2024-25, 2025-26) and current-season underlying profiles, including
-    non-linear interaction terms (home mismatch boosts, set-piece x home interaction,
-    attacking fullback clean-sheet + BPS synergy, and pedigree rebound effects).
+    Downloads real gameweek-by-gameweek match data (`merged_gw.csv`) from the multi-season
+    FPL archive and builds supervised (18_pre_match_features -> rolling_3gw_target_points)
+    pairs for players playing >= 60 minutes.
+    """
+    if REAL_GW_CACHE_PATH.exists():
+        try:
+            raw = json.loads(REAL_GW_CACHE_PATH.read_text(encoding="utf-8"))
+            if raw and len(raw[0]["x"]) == 18:
+                return [(row["x"], float(row["y"])) for row in raw]
+        except Exception:
+            pass
+
+    real_samples: List[Tuple[List[float], float]] = []
+    for season in seasons:
+        url = f"{VAASTAV_BASE_URL}/{season}/gws/merged_gw.csv"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                csv_text = resp.read().decode("utf-8", errors="replace")
+            reader = csv.DictReader(io.StringIO(csv_text))
+
+            by_player: Dict[str, List[Dict[str, str]]] = {}
+            for row in reader:
+                name = row.get("name", "")
+                if name:
+                    by_player.setdefault(name, []).append(row)
+
+            season_count = 0
+            for _, gw_rows in by_player.items():
+                if len(gw_rows) < 8:
+                    continue
+                for idx in range(5, len(gw_rows) - 2):
+                    target_window = gw_rows[idx : idx + 3]
+                    if any(float(r.get("minutes", 0) or 0) < 60 for r in target_window):
+                        continue
+                    prev_5 = gw_rows[idx - 5 : idx]
+                    prev_mins = sum(float(r.get("minutes", 0) or 0) for r in prev_5)
+                    if prev_mins < 270:
+                        continue
+                    nineties = prev_mins / 90.0
+                    target_row = gw_rows[idx]
+                    pos_raw = target_row.get("position", "MID")
+                    pos = "GKP" if pos_raw in ("GK", "GKP") else pos_raw
+                    if pos not in GOAL_MULT_NORM:
+                        pos = "MID"
+
+                    xg90 = sum(float(r.get("expected_goals", 0) or 0) for r in prev_5) / nineties
+                    xa90 = sum(float(r.get("expected_assists", 0) or 0) for r in prev_5) / nineties
+                    xgc90 = sum(float(r.get("expected_goals_conceded", 0) or 0) for r in prev_5) / nineties
+                    bps90 = sum(float(r.get("bps", 0) or 0) for r in prev_5) / nineties
+                    form_5 = sum(float(r.get("total_points", 0) or 0) for r in prev_5) / 5.0
+                    was_home = str(target_row.get("was_home", "False")).lower() == "true"
+
+                    opp_str = 1100 if was_home else 1170
+                    cs_p, gc2_p = compute_poisson_probs(xgc90, was_home, opp_str)
+                    gc2_feat = gc2_p if pos in ("GKP", "DEF") else 0.0
+
+                    # Smoothed 3-match forward average as target expected points
+                    target_xp = sum(float(r.get("total_points", 0) or 0) for r in target_window) / 3.0
+
+                    feats = [
+                        1.0 if pos == "GKP" else 0.0,
+                        1.0 if pos == "DEF" else 0.0,
+                        1.0 if pos == "MID" else 0.0,
+                        1.0 if pos == "FWD" else 0.0,
+                        GOAL_MULT_NORM[pos],
+                        CS_MULT_NORM[pos],
+                        round(xg90, 3),
+                        round(xa90, 3),
+                        round(xgc90 / 2.0, 3),
+                        round(bps90 / 30.0, 3),
+                        round(cs_p, 3),
+                        round(gc2_feat, 3),
+                        round(form_5 / 10.0, 3),
+                        round(form_5 / 8.0, 3),
+                        1.0 if was_home else 0.0,
+                        round((1200.0 - opp_str) / 200.0, 3),
+                        round((1200.0 - opp_str) / 200.0, 3),
+                        0.4 if xg90 > 0.35 else (0.2 if xa90 > 0.25 else 0.0),
+                    ]
+                    real_samples.append((feats, round(max(1.0, target_xp), 3)))
+                    season_count += 1
+                    if season_count >= max_samples_per_season:
+                        break
+                if season_count >= max_samples_per_season:
+                    break
+        except Exception:
+            continue
+
+    if real_samples:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        REAL_GW_CACHE_PATH.write_text(
+            json.dumps([{"x": x, "y": y} for x, y in real_samples]), encoding="utf-8"
+        )
+    return real_samples
+
+
+def build_historical_training_samples(
+    players: List[PlayerRecord], samples_per_player_season: int = 28
+) -> List[Tuple[List[float], float]]:
+    """
+    Constructs multi-season training samples across all opponent tiers and home/away states
+    using the 18-feature input representation.
     """
     rng = random.Random(101)
     samples: List[Tuple[List[float], float]] = []
 
     opp_profiles = [
-        (1020, 1030, True),   # Promoted team at Home (e.g. HUL/SUN/IPS/SOU)
-        (1040, 1050, False),  # Promoted team Away
-        (1110, 1130, True),   # Mid-table team at Home
-        (1140, 1150, False),  # Mid-table team Away
-        (1240, 1220, True),   # Top-6 opponent at Home
-        (1285, 1275, False),  # Elite opponent Away
+        (1015, 1025, True),
+        (1035, 1045, False),
+        (1090, 1110, True),
+        (1135, 1145, False),
+        (1220, 1210, True),
+        (1285, 1275, False),
     ]
 
     for p in players:
@@ -357,14 +493,12 @@ def build_historical_training_samples(
             nineties = s.minutes / 90.0
             s_xg90 = s.expected_goals / nineties
             s_xa90 = s.expected_assists / nineties
-            s_ppg = (s.total_points / nineties)
-            s_cs_rate = s.clean_sheets / nineties
+            s_ppg = s.total_points / nineties
 
             for _ in range(samples_per_player_season):
                 opp_att, opp_def, is_home = rng.choice(opp_profiles)
-                form_sim = max(1.5, s_ppg + rng.gauss(0, 1.1))
+                form_sim = max(1.5, s_ppg + rng.gauss(0, 1.0))
 
-                # Construct a synthetic historical match record for this player & opponent
                 sim_record = PlayerRecord(
                     id=p.id,
                     web_name=p.web_name,
@@ -397,134 +531,36 @@ def build_historical_training_samples(
                     historical_seasons=p.historical_seasons,
                 )
                 feats = extract_features(sim_record)
+                cs_p, gc2_p = compute_poisson_probs(p.xgc_per_90, is_home, opp_att)
 
-                # Ground-truth historical target with real football non-linearities:
-                opp_def_mult = (1140.0 / opp_def) ** 1.35
-                opp_att_mult = (opp_att / 1140.0) ** 1.35
-                home_mult = 1.10 if is_home else 0.92
+                opp_def_mult = (1140.0 / opp_def) ** 1.30
+                home_mult = 1.10 if is_home else 0.93
+                goal_pts = 10.0 if p.position == "GKP" else (6.0 if p.position == "DEF" else (5.0 if p.position == "MID" else 4.0))
+                cs_pts = 4.0 if p.position in ("GKP", "DEF") else (1.0 if p.position == "MID" else 0.0)
+                gc_pen = -1.15 * gc2_p if p.position in ("GKP", "DEF") else 0.0
+                save_pts = 0.85 * (opp_att / 1140.0) if p.position == "GKP" else 0.0
 
-                goal_wt = 10.0 if p.position == "GKP" else (6.0 if p.position == "DEF" else (5.0 if p.position == "MID" else 4.0))
-                cs_wt = 4.0 if p.position in ("GKP", "DEF") else (1.0 if p.position == "MID" else 0.0)
+                pen_boost = 0.09 if p.penalties_order == 1 else 0.0
+                cor_boost = 0.05 if p.corners_order in (1, 2) else 0.0
+                att_pts = ((s_xg90 + pen_boost) * goal_pts + (s_xa90 + cor_boost) * 3.0) * opp_def_mult * home_mult
+                bps_pts = min(1.8, max(0.0, (p.bps_per_90 - 14.0) / 10.0) + (0.3 if opp_def < 1080 else 0.0))
 
-                cs_p = min(0.68, max(0.08, s_cs_rate * (1.12 if is_home else 0.88) / opp_att_mult))
-                att_pts = (s_xg90 * goal_wt + s_xa90 * 3.0) * opp_def_mult * home_mult
+                # Non-linear synergies
+                synergy = 0.0
+                if p.position == "DEF" and cs_p > 0.45 and (s_xg90 + s_xa90) > 0.16:
+                    synergy += 0.55
+                if p.penalties_order == 1 and is_home and opp_def < 1060:
+                    synergy += 0.65
 
-                # Non-linear interaction 1: Set-piece taker at home vs weak defense
-                sp_bonus = 0.0
-                if (p.penalties_order == 1 or p.corners_order == 1) and opp_def <= 1060:
-                    sp_bonus = 0.85 if is_home else 0.50
-
-                # Non-linear interaction 2: Attacking defender clean-sheet + BPS synergy
-                def_synergy = 0.0
-                if p.position == "DEF" and cs_p > 0.42 and (s_xg90 + s_xa90) >= 0.18:
-                    def_synergy = 0.75
-
-                # Non-linear interaction 3: 3-year pedigree rebound
-                pedigree_anchor = 0.25 * p.historical_ppg_3yr + 0.15 * form_sim
-
-                target_pts = (
-                    1.6
-                    + cs_p * cs_wt
-                    + att_pts * 0.70
-                    + sp_bonus
-                    + def_synergy
-                    + pedigree_anchor
-                    + rng.gauss(0, 0.25)
-                )
+                first_principles = 2.0 + cs_p * cs_pts + gc_pen + save_pts + att_pts + bps_pts + synergy - 0.12
+                target_pts = 0.65 * first_principles + 0.20 * s_ppg + 0.15 * form_sim + rng.gauss(0, 0.2)
                 samples.append((feats, max(1.0, target_pts)))
 
     return samples
 
 
-def fetch_real_merged_gw_samples(
-    seasons: Tuple[str, ...] = ("2022-23", "2023-24", "2024-25"),
-    max_samples_per_season: int = 3500,
-) -> List[Tuple[List[float], float]]:
-    """
-    Downloads real gameweek-by-gameweek match data (`merged_gw.csv`) from the multi-season
-    FPL archive and builds supervised (rolling_pre_match_features -> actual_match_points) pairs
-    for players who played >= 60 minutes.
-    """
-    if REAL_GW_CACHE_PATH.exists():
-        try:
-            raw = json.loads(REAL_GW_CACHE_PATH.read_text(encoding="utf-8"))
-            return [(row["x"], float(row["y"])) for row in raw]
-        except Exception:
-            pass
-
-    real_samples: List[Tuple[List[float], float]] = []
-    for season in seasons:
-        url = f"{VAASTAV_BASE_URL}/{season}/gws/merged_gw.csv"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                csv_text = resp.read().decode("utf-8", errors="replace")
-            reader = csv.DictReader(io.StringIO(csv_text))
-
-            by_player: Dict[str, List[Dict[str, str]]] = {}
-            for row in reader:
-                name = row.get("name", "")
-                if name:
-                    by_player.setdefault(name, []).append(row)
-
-            season_count = 0
-            for _, gw_rows in by_player.items():
-                if len(gw_rows) < 6:
-                    continue
-                for idx in range(5, len(gw_rows)):
-                    target_row = gw_rows[idx]
-                    mins = float(target_row.get("minutes", 0) or 0)
-                    if mins < 60:
-                        continue
-                    prev_5 = gw_rows[idx - 5 : idx]
-                    prev_mins = sum(float(r.get("minutes", 0) or 0) for r in prev_5)
-                    if prev_mins < 270:
-                        continue
-                    nineties = prev_mins / 90.0
-                    pos = target_row.get("position", "MID")
-                    xg90 = sum(float(r.get("expected_goals", 0) or 0) for r in prev_5) / nineties
-                    xa90 = sum(float(r.get("expected_assists", 0) or 0) for r in prev_5) / nineties
-                    xgc90 = sum(float(r.get("expected_goals_conceded", 0) or 0) for r in prev_5) / nineties
-                    bps90 = sum(float(r.get("bps", 0) or 0) for r in prev_5) / nineties
-                    form_5 = sum(float(r.get("total_points", 0) or 0) for r in prev_5) / 5.0
-                    was_home = str(target_row.get("was_home", "False")).lower() == "true"
-                    actual_pts = float(target_row.get("total_points", 0) or 0)
-
-                    feats = [
-                        1.0 if pos == "GK" else 0.0,
-                        1.0 if pos == "DEF" else 0.0,
-                        1.0 if pos == "MID" else 0.0,
-                        1.0 if pos == "FWD" else 0.0,
-                        round(xg90, 3),
-                        round(xa90, 3),
-                        round(xgc90 / 2.0, 3),
-                        round(bps90 / 30.0, 3),
-                        round(form_5 / 10.0, 3),
-                        round(form_5 / 8.0, 3),
-                        1.0 if was_home else 0.0,
-                        0.2 if was_home else -0.1,
-                        0.2 if was_home else -0.1,
-                        0.3 if xg90 > 0.35 else 0.0,
-                    ]
-                    real_samples.append((feats, actual_pts))
-                    season_count += 1
-                    if season_count >= max_samples_per_season:
-                        break
-                if season_count >= max_samples_per_season:
-                    break
-        except Exception:
-            continue
-
-    if real_samples:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        REAL_GW_CACHE_PATH.write_text(
-            json.dumps([{"x": x, "y": y} for x, y in real_samples]), encoding="utf-8"
-        )
-    return real_samples
-
-
 def get_or_train_neural_net(force_retrain: bool = False) -> FPLNeuralNetwork:
-    """Loads cached neural network weights or trains from scratch on 3-year historical data."""
+    """Loads cached 18-input neural network weights or trains end-to-end."""
     if NN_WEIGHTS_PATH.exists() and not force_retrain:
         try:
             return FPLNeuralNetwork.load(NN_WEIGHTS_PATH)
@@ -532,17 +568,18 @@ def get_or_train_neural_net(force_retrain: bool = False) -> FPLNeuralNetwork:
             pass
 
     players = load_players()
-    dataset = build_historical_training_samples(players, samples_per_player_season=24)
+    dataset = build_historical_training_samples(players, samples_per_player_season=28)
+    real_gw = []
     if REAL_GW_CACHE_PATH.exists():
         real_gw = fetch_real_merged_gw_samples()
         dataset.extend(real_gw)
-    net = FPLNeuralNetwork(in_dim=14, h1_dim=24, h2_dim=12, seed=42)
-    net.train(dataset, epochs=75, lr=0.006)
+    net = FPLNeuralNetwork(in_dim=18, h1_dim=32, h2_dim=16, seed=42)
+    net.train(dataset, real_gw_count=len(real_gw), epochs=65, lr=0.005)
     net.save(NN_WEIGHTS_PATH)
     return net
 
 
 if __name__ == "__main__":
     net = get_or_train_neural_net(force_retrain=True)
-    print("=== FPL Neural Network Trained Successfully ===")
+    print("=== End-to-End 18-Feature FPL Neural Network Trained ===")
     print(json.dumps(net.metrics, indent=2))

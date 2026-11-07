@@ -622,7 +622,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <div class="card-panel">
-          <h3>🧠 Supervised Neural Network (14→24→12→1)</h3>
+          <h3>🧠 End-to-End Neural Net (18→32→16→1)</h3>
           <div id="nn-metrics-box" style="font-size:0.81rem; line-height:1.45; color:#e5e0eb;"></div>
         </div>
 
