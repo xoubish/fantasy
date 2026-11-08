@@ -42,11 +42,6 @@ NEWS_SOURCES = [
         "type": "html",
     },
     {
-        "name": "Sporting Life Premier League",
-        "url": "https://www.sportinglife.com/football/premier-league",
-        "type": "html",
-    },
-    {
         "name": "BBC Sport Premier League",
         "url": "https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml",
         "type": "rss",

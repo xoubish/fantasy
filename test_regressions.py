@@ -139,6 +139,24 @@ class DataTests(unittest.TestCase):
         with patch.object(neural_model, "latest_finished_gw", return_value=0):
             self.assertEqual(neural_model._finished_rows(player), [])
 
+    def test_completed_fixture_in_active_round_is_included_while_live_match_is_excluded(self):
+        import team_ratings
+        r_done = {"round": 10, "fixture": 91, "team_h_score": 1, "minutes": 90}
+        r_live = {"round": 10, "fixture": 98, "team_h_score": 0, "minutes": 15}
+        player = SimpleNamespace(gw_history=[r_done, r_live])
+        with patch.object(neural_model, "latest_finished_gw", return_value=9), \
+             patch.object(neural_model, "finished_fixture_ids", return_value={91}):
+            self.assertEqual(neural_model._finished_rows(player), [r_done])
+        fixes = [
+            {"id": 91, "team_h": 1, "team_a": 2, "team_h_score": 1, "team_a_score": 0,
+             "finished": False, "finished_provisional": True, "kickoff_time": "2026-11-07T15:00:00Z"},
+            {"id": 98, "team_h": 1, "team_a": 2, "team_h_score": 0, "team_a_score": 2,
+             "finished": False, "finished_provisional": False, "kickoff_time": "2026-11-08T16:30:00Z"},
+        ]
+        matches = team_ratings.matches_from_fixtures(fixes, {1: 11, 2: 22})
+        self.assertEqual(len(matches), 1)
+        self.assertEqual((matches[0].home_goals, matches[0].away_goals), (1, 0))
+
 
 class PlanningTests(unittest.TestCase):
     def test_solver_lineup_and_captain_survive_rendering(self):

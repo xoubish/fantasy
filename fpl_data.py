@@ -250,7 +250,8 @@ def sync_live_fpl_data(
                 (
                     int(f.get("event", 0) or 0)
                     for f in fixtures
-                    if f.get("finished") and f.get("team_h_score") is not None
+                    if (f.get("finished") or f.get("finished_provisional"))
+                    and f.get("team_h_score") is not None
                 ),
                 default=0,
             )

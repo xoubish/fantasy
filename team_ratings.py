@@ -56,14 +56,22 @@ def season_of(moment: datetime) -> int:
     return moment.year if moment.month >= 7 else moment.year - 1
 
 
+def _is_finished(f: Dict[str, Any]) -> bool:
+    for key in ("finished", "finished_provisional"):
+        val = f.get(key)
+        if isinstance(val, str):
+            if val.lower() == "true":
+                return True
+        elif val:
+            return True
+    return False
+
+
 def matches_from_fixtures(fixtures: Iterable[Dict[str, Any]], code_of_team: Dict[int, int]) -> List[Match]:
     """Finished fixtures (API or archive rows) to Match records keyed by stable team code."""
     out: List[Match] = []
     for f in fixtures:
-        finished = f.get("finished")
-        if isinstance(finished, str):
-            finished = finished.lower() == "true"
-        if not finished or f.get("team_h_score") in (None, "") or not f.get("kickoff_time"):
+        if not _is_finished(f) or f.get("team_h_score") in (None, "") or not f.get("kickoff_time"):
             continue
         try:
             home, away = code_of_team[int(f["team_h"])], code_of_team[int(f["team_a"])]

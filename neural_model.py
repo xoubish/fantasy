@@ -358,37 +358,59 @@ def features_from_history(
 
 
 _LATEST_FINISHED_GW_CACHE: Optional[int] = None
+_FINISHED_FIXTURE_IDS_CACHE: set[int] = set()
 _LATEST_FINISHED_GW_SIGNATURE = None
 
 
-def latest_finished_gw() -> int:
-    """Last gameweek in which EVERY fixture is finished (from fixtures.json), cached per process."""
-    global _LATEST_FINISHED_GW_CACHE, _LATEST_FINISHED_GW_SIGNATURE
+def _refresh_fixture_completion_cache() -> None:
+    global _LATEST_FINISHED_GW_CACHE, _FINISHED_FIXTURE_IDS_CACHE, _LATEST_FINISHED_GW_SIGNATURE
     signature = (CACHE_FIXTURES.stat().st_mtime_ns, CACHE_FIXTURES.stat().st_size) if CACHE_FIXTURES.exists() else None
     if _LATEST_FINISHED_GW_CACHE is None or signature != _LATEST_FINISHED_GW_SIGNATURE:
         _LATEST_FINISHED_GW_SIGNATURE = signature
         if not CACHE_FIXTURES.exists():
             _LATEST_FINISHED_GW_CACHE = 0
+            _FINISHED_FIXTURE_IDS_CACHE = set()
         else:
             fixtures = json.loads(CACHE_FIXTURES.read_text(encoding="utf-8"))
             by_gw: Dict[int, List[bool]] = {}
+            fin_ids: set[int] = set()
             for f in fixtures:
                 gw = int(f.get("event", 0) or 0)
+                done_flag = bool(f.get("finished") or f.get("finished_provisional")) and f.get("team_h_score") is not None
+                if done_flag and f.get("id") is not None:
+                    fin_ids.add(int(f["id"]))
                 if gw:
-                    by_gw.setdefault(gw, []).append(bool(f.get("finished")) and f.get("team_h_score") is not None)
+                    by_gw.setdefault(gw, []).append(done_flag)
             done = [gw for gw, flags in by_gw.items() if flags and all(flags)]
             _LATEST_FINISHED_GW_CACHE = max(done, default=0)
-    return _LATEST_FINISHED_GW_CACHE
+            _FINISHED_FIXTURE_IDS_CACHE = fin_ids
+
+
+def latest_finished_gw() -> int:
+    """Last gameweek in which EVERY fixture is finished (from fixtures.json), cached per process."""
+    _refresh_fixture_completion_cache()
+    return _LATEST_FINISHED_GW_CACHE or 0
+
+
+def finished_fixture_ids() -> set[int]:
+    """Fixture IDs whose match has finished (finished or finished_provisional with a final score)."""
+    _refresh_fixture_completion_cache()
+    return _FINISHED_FIXTURE_IDS_CACHE
 
 
 def _finished_rows(player: PlayerRecord, max_gw: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Completed match rows, capped at the last FULLY finished gameweek so a round that is
-    in progress (one match played, bonus not final) never leaks into features or targets."""
+    """Completed match rows, capped at the last FULLY finished gameweek (plus any already-completed
+    fixture in `latest_finished_gw() + 1` when `max_gw` is None) so an in-progress match never leaks."""
     cap = latest_finished_gw() if max_gw is None else max_gw
+    fin_ids = finished_fixture_ids() if (max_gw is None and cap > 0) else set()
     return [
         r
         for r in player.gw_history
-        if r.get("team_h_score") is not None and int(r.get("round", 0) or 0) <= cap
+        if r.get("team_h_score") is not None
+        and (
+            int(r.get("round", 0) or 0) <= cap
+            or (int(r.get("round", 0) or 0) == cap + 1 and int(r.get("fixture", 0) or 0) in fin_ids)
+        )
     ]
 
 

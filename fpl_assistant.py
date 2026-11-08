@@ -494,6 +494,14 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
     _print_model_metrics(net)
 
     print("=== Step 4/4: Running AI Tactical Head Coach & Rebuilding Web App (index.html) ===")
+    from neural_model import latest_finished_gw
+    from backtest import RESULTS_PATH, run_backtest
+
+    fin_gw = latest_finished_gw()
+    if fin_gw >= 3:
+        bt_res = run_backtest(list(range(3, fin_gw + 1)), use_coach=False, verbose=False)
+        RESULTS_PATH.write_text(json.dumps(bt_res, indent=1), encoding="utf-8")
+
     from web_app import build_static_html
 
     build_static_html()
@@ -509,8 +517,12 @@ def cmd_weekly_update(args: argparse.Namespace) -> None:
                 "index.html",
                 "data/nn_weights.json",
                 "data/ai_coach_decisions.json",
+                "data/backtest_results.json",
+                "data/minutes_ledger.json",
                 "data/latest_report.md",
                 "data/my_squad_pitch.png",
+                "data/best_squad_pitch.png",
+                "data/odds",
             ],
             check=False,
         )

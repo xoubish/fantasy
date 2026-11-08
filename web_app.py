@@ -175,8 +175,8 @@ def _load_backtest_summary() -> Optional[Dict[str, Any]]:
 
 
 def _gameweek_meta(all_players) -> Dict[str, Any]:
-    """Target gameweek number, its deadline and the last fully finished gameweek."""
-    from neural_model import latest_finished_gw
+    """Target gameweek number, its deadline and the last completed gameweek included in form."""
+    from neural_model import _finished_rows, latest_finished_gw
 
     gw = next((p.target_gw for p in all_players if p.target_gw), 0)
     deadline = ""
@@ -186,7 +186,11 @@ def _gameweek_meta(all_players) -> Dict[str, Any]:
         deadline = ev.get("deadline_time", "") or ""
     except Exception:
         pass
-    return {"gw": gw, "deadline": deadline, "formThroughGw": latest_finished_gw()}
+    form_gw = max(
+        (int(r.get("round", 0) or 0) for p in all_players for r in _finished_rows(p)),
+        default=latest_finished_gw(),
+    )
+    return {"gw": gw, "deadline": deadline, "formThroughGw": form_gw}
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -431,7 +435,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <a class="brand" href="#" aria-label="PL Fantasy Predictor home">
         <span class="wordmark">PL Fantasy Predictor</span>
       </a>
-      <nav class="top-nav" aria-label="Page sections"><a href="#selection">Squad</a><a href="#moves">Transfers</a><a href="#evidence">Performance</a></nav>
+      <nav class="top-nav" aria-label="Page sections"><a href="#selection">Squad</a><a href="#about">Model</a><a href="#evidence">Performance</a></nav>
     </header>
 
     <main>
