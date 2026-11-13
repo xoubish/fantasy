@@ -3,7 +3,7 @@
 - **Recommended Formation:** `4-5-1`
 - **Captain (2x):** **Isak** (MUN (H)) — `9.0 xP`
 - **Vice-Captain:** **Palmer** (LEE (H)) — `4.4 xP`
-- **Projected Total Score:** **47.1 pts** *(Floor: 22 pts | Ceiling: 114 pts)*
+- **Projected Total Score:** **47.2 pts** *(Floor: 22 pts | Ceiling: 114 pts)*
 
 ## 1. Optimal Starting XI
 
@@ -48,22 +48,22 @@
 
 | Out | In | Club & Fixture | Cost Diff | Starting XI Gain | Hit-Adjusted Gain |
 | :--- | :--- | :--- | :---: | :---: | :---: |
-| O'Reilly (£6.2m) | **Van Hecke** (£5.1m) | TOT `IPS (H)` | -1.1m | **+2.7 xP** | `-1.3 xP` |
-| O'Reilly (£6.2m) | **Ajer** (£4.5m) | BRE `EVE (H)` | -1.7m | **+2.6 xP** | `-1.4 xP` |
-| O'Reilly (£6.2m) | **Silva** (£5.1m) | BOU `NFO (H)` | -1.1m | **+2.0 xP** | `-2.0 xP` |
-| O'Reilly (£6.2m) | **Khusanov** (£5.3m) | MCI `FUL (H)` | -0.9m | **+2.0 xP** | `-2.0 xP` |
-| O'Reilly (£6.2m) | **Maatsen** (£4.4m) | AVL `SUN (H)` | -1.8m | **+1.9 xP** | `-2.1 xP` |
+| O'Reilly (£6.2m) | **Van Hecke** (£5.1m) | TOT `IPS (H)` | -1.1m | **+2.6 xP** | `-1.4 xP` |
+| O'Reilly (£6.2m) | **Ajer** (£4.5m) | BRE `EVE (H)` | -1.7m | **+2.5 xP** | `-1.5 xP` |
+| O'Reilly (£6.2m) | **Silva** (£5.1m) | BOU `NFO (H)` | -1.1m | **+1.9 xP** | `-2.1 xP` |
+| O'Reilly (£6.2m) | **Khusanov** (£5.3m) | MCI `FUL (H)` | -0.9m | **+1.9 xP** | `-2.1 xP` |
+| O'Reilly (£6.2m) | **Maatsen** (£4.4m) | AVL `SUN (H)` | -1.8m | **+1.8 xP** | `-2.2 xP` |
 
 ## 4b. Multi-Gameweek Transfer Plan (FT banked to 5, -4 per extra transfer)
 
 | GW | Free transfers | Out | In | Hit | Captain | XI xP |
 | :---: | :---: | :--- | :--- | :---: | :--- | :---: |
 | 11 | 0 | — | — | 0 | Isak | 46.5 |
-| 12 | 1 | Thiago | **N.Jackson** (£7.1m) | 0 | Groß | 48.7 |
+| 12 | 1 | Thiago | **N.Jackson** (£7.1m) | 0 | Groß | 48.8 |
 | 13 | 1 | — | — | 0 | Palmer | 49.4 |
-| 14 | 2 | — | — | 0 | N.Jackson | 48.7 |
+| 14 | 2 | — | — | 0 | N.Jackson | 48.6 |
 
-> Plan value (xP minus hits over 4 GWs): **193.3** | hits taken: 0. Selling prices are assumed equal to current prices.
+> Plan value (xP minus hits over 4 GWs): **193.2** | hits taken: 0. Selling prices are assumed equal to current prices.
 
 ## 5. Unlimited Free Hit / Dream XI Comparison (`4-4-2` — 56.5 xP)
 
