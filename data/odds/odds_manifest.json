@@ -34,13 +34,13 @@
       "url": "https://www.football-data.co.uk/mmz4281/2627/E0.csv",
       "sha256": "21d2b96792bd0bc8a324123ae68eaf60b981c5a016c538d086e8d8a5cbedd95a",
       "rows": 110,
-      "downloaded_at": "2026-11-24T19:10:43.249850+00:00"
+      "downloaded_at": "2026-11-27T19:33:57.647630+00:00"
     },
     "fixtures.csv": {
       "url": "https://www.football-data.co.uk/fixtures.csv",
-      "sha256": "09b5cca1b8029ed7f1e89bba82c3c609c27d397a7cc62fb60aea62b81c39a2b1",
-      "rows": 43,
-      "downloaded_at": "2026-11-24T19:10:44.343430+00:00"
+      "sha256": "c86cbd00243da04216eaee79b628df262229601c8241712f2a18808f2ee6ad0c",
+      "rows": 175,
+      "downloaded_at": "2026-11-27T19:34:00.565213+00:00"
     }
   },
   "source": "https://www.football-data.co.uk",
